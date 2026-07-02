@@ -1,0 +1,6 @@
+{
+  "name": "Trình Tạo Bảng Biến Thiên",
+  "description": "Ứng dụng phân tích hàm số, tự động vẽ bảng biến thiên trực quan, xuất mã LaTeX (tkz-tab) và tạo bài tập điền khuyết tương tác cho học sinh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

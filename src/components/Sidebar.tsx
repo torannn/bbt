@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BookOpen, History, PlusCircle, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { BookOpen, History, PlusCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface SidebarProps {
   history: string[];
   onSelectFunction: (func: string) => void;
   onClearHistory: () => void;
   activeFunction: string;
+  role?: 'student' | 'teacher';
 }
 
 interface TemplateGroup {
@@ -44,51 +46,68 @@ const TEMPLATE_FUNCTIONS: TemplateGroup[] = [
   }
 ];
 
-export function Sidebar({ history, onSelectFunction, onClearHistory, activeFunction }: SidebarProps) {
+export function Sidebar({ history, onSelectFunction, onClearHistory, activeFunction, role }: SidebarProps) {
+  const [showTemplates, setShowTemplates] = useState<boolean>(false);
+
   return (
     <aside className="w-full lg:w-80 flex flex-col gap-6 bg-slate-50 lg:border-r border-slate-200 p-4 lg:p-6 no-print">
       
       {/* SECTION 1: QUICK TEMPLATES */}
-      <div className="flex flex-col gap-4">
-        <h2 className="text-xs font-bold tracking-wider text-slate-400 uppercase flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-indigo-500" />
-          Hàm Số Mẫu Chuẩn (12)
-        </h2>
-        
-        <div className="flex flex-col gap-5">
-          {TEMPLATE_FUNCTIONS.map((group, gIdx) => (
-            <div key={gIdx} className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold text-slate-500 bg-slate-200/50 px-2 py-0.5 rounded-md w-fit">
-                {group.category}
-              </span>
-              <div className="grid grid-cols-1 gap-1 pl-1">
-                {group.items.map((item, idx) => {
-                  const isActive = activeFunction === item.formula;
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => onSelectFunction(item.formula)}
-                      className={`text-left px-3 py-2 rounded-lg transition-all text-xs flex flex-col gap-0.5 border ${
-                        isActive
-                          ? 'bg-indigo-50 border-indigo-200 text-indigo-900 font-medium shadow-sm'
-                          : 'bg-white border-slate-100 text-slate-700 hover:bg-slate-100 hover:border-slate-200'
-                      }`}
-                    >
-                      <span className="font-semibold text-slate-800 flex items-center gap-1.5">
-                        <PlusCircle className={`w-3.5 h-3.5 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`} />
-                        {item.label}
-                      </span>
-                      <code className="text-[10px] text-slate-500 font-mono mt-0.5 px-1 py-0.5 bg-slate-50 rounded">
-                        {item.formula}
-                      </code>
-                    </button>
-                  );
-                })}
-              </div>
+      {role !== 'student' && (
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => setShowTemplates(!showTemplates)}
+            className="flex items-center justify-between text-left w-full hover:bg-slate-100 p-1.5 rounded-lg transition-colors group"
+            title={showTemplates ? "Ẩn danh sách hàm số mẫu chuẩn" : "Hiện danh sách hàm số mẫu chuẩn"}
+          >
+            <h2 className="text-xs font-bold tracking-wider text-slate-400 uppercase flex items-center gap-2 group-hover:text-slate-655">
+              <BookOpen className="w-4 h-4 text-indigo-500" />
+              Hàm Số Mẫu Chuẩn (12)
+            </h2>
+            {showTemplates ? (
+              <ChevronUp className="w-4 h-4 text-slate-400 group-hover:text-slate-600" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-slate-600" />
+            )}
+          </button>
+          
+          {showTemplates && (
+            <div className="flex flex-col gap-5 mt-2 animate-in fade-in slide-in-from-top-2 duration-200">
+              {TEMPLATE_FUNCTIONS.map((group, gIdx) => (
+                <div key={gIdx} className="flex flex-col gap-1.5">
+                  <span className="text-xs font-semibold text-slate-500 bg-slate-200/50 px-2 py-0.5 rounded-md w-fit">
+                    {group.category}
+                  </span>
+                  <div className="grid grid-cols-1 gap-1 pl-1">
+                    {group.items.map((item, idx) => {
+                      const isActive = activeFunction === item.formula;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => onSelectFunction(item.formula)}
+                          className={`text-left px-3 py-2 rounded-lg transition-all text-xs flex flex-col gap-0.5 border ${
+                            isActive
+                              ? 'bg-indigo-50 border-indigo-200 text-indigo-900 font-medium shadow-sm'
+                              : 'bg-white border-slate-100 text-slate-700 hover:bg-slate-100 hover:border-slate-200'
+                          }`}
+                        >
+                          <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                            <PlusCircle className={`w-3.5 h-3.5 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`} />
+                            {item.label}
+                          </span>
+                          <code className="text-[10px] text-slate-500 font-mono mt-0.5 px-1 py-0.5 bg-slate-50 rounded">
+                            {item.formula}
+                          </code>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
-      </div>
+      )}
 
       {/* SECTION 2: HISTORY */}
       <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 mt-2 flex-grow">

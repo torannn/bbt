@@ -8,7 +8,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
-import { analyzeFunctionCAS } from './src/lib/cas';
+import { analyzeFunctionCAS, preprocessImplicitMultiplication } from './src/lib/cas';
 
 // Load environment variables
 dotenv.config();
@@ -32,11 +32,14 @@ const ai = new GoogleGenAI({
 // API endpoint for math function analysis
 app.post('/api/analyze-function', async (req, res) => {
   try {
-    const { functionStr } = req.body;
+    let { functionStr } = req.body;
     if (!functionStr || typeof functionStr !== 'string') {
       res.status(400).json({ error: 'Vui lòng cung cấp công thức hàm số hợp lệ.' });
       return;
     }
+
+    // Preprocess implicit multiplications (e.g. 2x -> 2*x) so they are parsed 100% correctly
+    functionStr = preprocessImplicitMultiplication(functionStr.trim());
 
     // Try analyzing completely offline/deterministically using the local CAS engine first
     try {
@@ -81,8 +84,11 @@ Quy tắc toán học cực kỳ quan trọng:
    - Sử dụng \\tkzTabInit, \\tkzTabLine, \\tkzTabVar đúng cú pháp của tkz-tab.
    - Tính toán tự động khoảng cách cột để tránh bị tràn lề hoặc quá khít chữ: Công thức tính espcl tối ưu là espcl = max(1.5, 8.0 / so_cot) (với so_cot là số lượng điểm hoành độ x). Cấu hình ví dụ: \\tkzTabInit[lgt=2.5, espcl=...]...
    - Ví dụ hàm trùng phương hoặc phân thức: sử dụng đúng tùy chọn "d" cho hai vạch, "z" cho số 0, "+D-" cho gián đoạn ở dòng y.
-7. Các bước giải thích chi tiết (explanation_steps):
-   - Chứa các bước giải thích chi tiết bằng tiếng Việt: Tìm tập xác định, Tính đạo hàm y', Giải y' = 0, Xét dấu và giới hạn để học sinh hiểu được cách làm.`;
+7. Các bước phân tích hàm số (explanation_steps) bao gồm ĐÚNG 4 BƯỚC theo chuẩn sau:
+   - Bước 1. Tập xác định: D= ... (định dạng title là "Bước 1. Tập xác định")
+   - Bước 2: Tính đạo hàm y' và tìm các điểm tới hạn (định dạng title là "Bước 2: Tính đạo hàm y' và tìm các điểm tới hạn")
+   - Bước 3: Lập bảng biến thiên đồng thời tính các giá trị cực trị, giới hạn tại vô cực, tiệm cận nếu có (định dạng title là "Bước 3: Tính các giá trị cực trị, giới hạn, tiệm cận")
+   - Bước 4: Lập bảng biến thiên và nêu kết luận: khoảng đơn điệu, cực trị, tiệm cận (định dạng title là "Bước 4: Bảng biến thiên và kết luận").`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',

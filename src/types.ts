@@ -53,6 +53,8 @@ export interface FunctionAnalysis {
   y_row: YRow;
   latex_code: string; // tkz-tab LaTeX code
   explanation_steps: ExplanationStep[];
+  poles?: number[];
+  criticals?: number[];
 }
 
 // Exercise / Quiz types

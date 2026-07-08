@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { MathWYSIWYMInput } from './components/MathWYSIWYMInput';
 import { VisualBBT } from './components/VisualBBT';
 import { ExplanationPanel } from './components/ExplanationPanel';
 import { MathLaTeX } from './components/MathLaTeX';
@@ -46,13 +47,60 @@ const LOADING_MESSAGES = [
   "Hoàn thiện dữ liệu và hiển thị bảng biến thiên..."
 ];
 
+// Robust utility to convert raw expression into a formatted LaTeX mathematical representation for WYSIWYM
+function getLiveLaTeX(expr: string): string {
+  if (!expr) return '';
+  
+  let s = expr;
+  
+  // Clean dividing symbol
+  s = s.replace(/÷/g, '/');
+  
+  // 1. Fractions: (a)/(b) -> \frac{a}{b}
+  s = s.replace(/\(([^)]+)\)\/\(([^)]+)\)/g, '\\frac{$1}{$2}');
+  s = s.replace(/\b([a-zA-Z0-9_]+)\/\(([^)]+)\)/g, '\\frac{$1}{$2}');
+  s = s.replace(/\(([^)]+)\)\/([a-zA-Z0-9_]+)\b/g, '\\frac{$1}{$2}');
+  s = s.replace(/\b([a-zA-Z0-9_]+)\/([a-zA-Z0-9_]+)\b/g, '\\frac{$1}{$2}');
+  
+  // 2. Square roots: sqrt(anything) -> \sqrt{anything}
+  for (let i = 0; i < 5; i++) {
+    s = s.replace(/sqrt\(([^)]+)\)/g, '\\sqrt{$1}');
+  }
+  
+  // 3. Absolute value: abs(anything) -> |anything|
+  for (let i = 0; i < 5; i++) {
+    s = s.replace(/abs\(([^)]+)\)/g, '\\left|$1\\right|');
+  }
+  
+  // 4. Powers: x^2 -> x^2, (anything)^2 -> {anything}^2
+  s = s.replace(/\(([^)]+)\)\^([a-zA-Z0-9\+\-]+)/g, '{$1}^{$2}');
+  s = s.replace(/([a-zA-Z0-9]+)\^([a-zA-Z0-9\+\-]+)/g, '$1^{$2}');
+  s = s.replace(/\^([a-zA-Z0-9\+\-]+)/g, '^{$1}');
+  
+  // 5. Functions: sin, cos, tan, cot, ln, log, log10, exp
+  s = s.replace(/\b(sin|cos|tan|cot|ln|log|log10|exp)\(([^)]+)\)/g, '\\$1\\left($2\\right)');
+  s = s.replace(/\b(sin|cos|tan|cot|ln|log|log10|exp)\b/g, '\\$1 ');
+  
+  // 6. Multiplication: a*b -> a \cdot b
+  s = s.replace(/\*/g, ' \\cdot ');
+  
+  // 7. Standard formatting cleanup
+  s = s.replace(/\bpi\b/g, '\\pi ');
+  
+  return s;
+}
+
 export default function App() {
+  const inputRef = useRef<HTMLInputElement>(null);
   const [functionInput, setFunctionInput] = useState<string>("x^3 - 3*x + 2");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingMsgIdx, setLoadingMsgIdx] = useState<number>(0);
   const [analysis, setAnalysis] = useState<FunctionAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Global role state
+  const [role, setRole] = useState<'student' | 'teacher'>('student');
+  
   // App Modes: 'view' | 'teacher' | 'student'
   const [mode, setMode] = useState<'view' | 'teacher' | 'student'>('view');
   
@@ -74,6 +122,161 @@ export default function App() {
   // Toggle Graph & Explanation Panel
   const [showGraph, setShowGraph] = useState<boolean>(true);
   const [showExplanation, setShowExplanation] = useState<boolean>(true);
+  const [showHistory, setShowHistory] = useState<boolean>(true);
+
+  // Visual Math Template Builder states
+  const [selectedTemplate, setSelectedTemplate] = useState<'cubic' | 'quartic' | 'rational' | 'sqrt' | 'log_exp' | null>(null);
+  const [tempValues, setTempValues] = useState<Record<string, string>>({
+    cubic_a: "1",
+    cubic_b: "0",
+    cubic_c: "-3",
+    cubic_d: "2",
+    quartic_a: "1",
+    quartic_b: "-2",
+    quartic_c: "-1",
+    rational_a: "2",
+    rational_b: "-1",
+    rational_c: "1",
+    rational_d: "1",
+    sqrt_a: "1",
+    sqrt_b: "0",
+    sqrt_c: "-1",
+    logexp_a: "1",
+    logexp_b: "1",
+    logexp_type: "ln",
+    logexp_c: "0"
+  });
+
+  const updateTempValue = (key: string, val: string) => {
+    setTempValues(prev => ({
+      ...prev,
+      [key]: val
+    }));
+  };
+
+  // Sync template values to functionInput
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    
+    let formula = "";
+    if (selectedTemplate === 'cubic') {
+      const a = tempValues.cubic_a || "0";
+      const b = tempValues.cubic_b || "0";
+      const c = tempValues.cubic_c || "0";
+      const d = tempValues.cubic_d || "0";
+      
+      const terms = [];
+      if (a !== "0" && a !== "") {
+        terms.push(a === "1" ? "x^3" : a === "-1" ? "-x^3" : `${a}*x^3`);
+      }
+      if (b !== "0" && b !== "") {
+        const bSign = parseFloat(b) > 0 && terms.length > 0 ? "+" : "";
+        terms.push(`${bSign}${b === "1" ? "x^2" : b === "-1" ? "-x^2" : `${b}*x^2`}`);
+      }
+      if (c !== "0" && c !== "") {
+        const cSign = parseFloat(c) > 0 && terms.length > 0 ? "+" : "";
+        terms.push(`${cSign}${c === "1" ? "x" : c === "-1" ? "-x" : `${c}*x`}`);
+      }
+      if (d !== "0" && d !== "") {
+        const dSign = parseFloat(d) > 0 && terms.length > 0 ? "+" : "";
+        terms.push(`${dSign}${d}`);
+      }
+      formula = terms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
+      if (!formula) formula = "0";
+    } 
+    else if (selectedTemplate === 'quartic') {
+      const a = tempValues.quartic_a || "0";
+      const b = tempValues.quartic_b || "0";
+      const c = tempValues.quartic_c || "0";
+      
+      const terms = [];
+      if (a !== "0" && a !== "") {
+        terms.push(a === "1" ? "x^4" : a === "-1" ? "-x^4" : `${a}*x^4`);
+      }
+      if (b !== "0" && b !== "") {
+        const bSign = parseFloat(b) > 0 && terms.length > 0 ? "+" : "";
+        terms.push(`${bSign}${b === "1" ? "x^2" : b === "-1" ? "-x^2" : `${b}*x^2`}`);
+      }
+      if (c !== "0" && c !== "") {
+        const cSign = parseFloat(c) > 0 && terms.length > 0 ? "+" : "";
+        terms.push(`${cSign}${c}`);
+      }
+      formula = terms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
+      if (!formula) formula = "0";
+    }
+    else if (selectedTemplate === 'rational') {
+      const a = tempValues.rational_a || "0";
+      const b = tempValues.rational_b || "0";
+      const c = tempValues.rational_c || "1";
+      const d = tempValues.rational_d || "0";
+      
+      const numTerms = [];
+      if (a !== "0" && a !== "") {
+        numTerms.push(a === "1" ? "x" : a === "-1" ? "-x" : `${a}*x`);
+      }
+      if (b !== "0" && b !== "") {
+        const bSign = parseFloat(b) > 0 && numTerms.length > 0 ? "+" : "";
+        numTerms.push(`${bSign}${b}`);
+      }
+      const num = numTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
+      
+      const denTerms = [];
+      if (c !== "0" && c !== "") {
+        denTerms.push(c === "1" ? "x" : c === "-1" ? "-x" : `${c}*x`);
+      }
+      if (d !== "0" && d !== "") {
+        const dSign = parseFloat(d) > 0 && denTerms.length > 0 ? "+" : "";
+        denTerms.push(`${dSign}${d}`);
+      }
+      const den = denTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
+      
+      formula = `(${num || "0"})/(${den || "1"})`;
+    }
+    else if (selectedTemplate === 'sqrt') {
+      const a = tempValues.sqrt_a || "1";
+      const b = tempValues.sqrt_b || "0";
+      const c = tempValues.sqrt_c || "0";
+      
+      const insideTerms = [];
+      if (a !== "0" && a !== "") {
+        insideTerms.push(a === "1" ? "x^2" : a === "-1" ? "-x^2" : `${a}*x^2`);
+      }
+      if (b !== "0" && b !== "") {
+        const bSign = parseFloat(b) > 0 && insideTerms.length > 0 ? "+" : "";
+        insideTerms.push(`${bSign}${b === "1" ? "x" : b === "-1" ? "-x" : `${b}*x`}`);
+      }
+      if (c !== "0" && c !== "") {
+        const cSign = parseFloat(c) > 0 && insideTerms.length > 0 ? "+" : "";
+        insideTerms.push(`${cSign}${c}`);
+      }
+      const inside = insideTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
+      formula = `sqrt(${inside || "0"})`;
+    }
+    else if (selectedTemplate === 'log_exp') {
+      const a = tempValues.logexp_a || "1";
+      const b = tempValues.logexp_b || "1";
+      const type = tempValues.logexp_type || "ln";
+      const c = tempValues.logexp_c || "0";
+      
+      let base = "";
+      const bPart = b === "1" ? "x" : b === "-1" ? "-x" : `${b}*x`;
+      
+      if (type === 'ln') {
+        base = a === "1" ? `ln(${bPart})` : a === "-1" ? `-ln(${bPart})` : `${a}*ln(${bPart})`;
+      } else { // e^x
+        base = a === "1" ? `e^(${bPart})` : a === "-1" ? `-e^(${bPart})` : `${a}*e^(${bPart})`;
+      }
+      
+      if (c !== "0" && c !== "") {
+        const cSign = parseFloat(c) > 0 ? " + " : " ";
+        formula = `${base}${cSign}${c}`;
+      } else {
+        formula = base;
+      }
+    }
+    
+    setFunctionInput(formula);
+  }, [selectedTemplate, tempValues]);
 
   // Rotate loading messages
   useEffect(() => {
@@ -468,7 +671,48 @@ export default function App() {
 
         {/* Action controls */}
         <div className="flex items-center gap-2">
-          {analysis && (
+          {/* Global Role Switcher */}
+          <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 mr-2">
+            <button
+              onClick={() => {
+                setRole('student');
+                setMode('view');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                role === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Học Sinh
+            </button>
+            <button
+              onClick={() => {
+                setRole('teacher');
+                setMode('teacher');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                role === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Giáo Viên
+            </button>
+          </div>
+
+          {role === 'student' && (
+            <button
+              onClick={() => setShowHistory(prev => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                showHistory 
+                  ? 'bg-indigo-600 text-white shadow-sm' 
+                  : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-850'
+              }`}
+              title="Bật/Tắt hiển thị lịch sử khảo sát"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Lịch sử</span>
+            </button>
+          )}
+
+          {analysis && role === 'teacher' && (
             <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
               <button
                 onClick={() => setShowGraph(prev => !prev)}
@@ -497,15 +741,17 @@ export default function App() {
             </div>
           )}
 
-          <button 
-            onClick={() => window.print()}
-            disabled={!analysis}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-            title="In đề bài hoặc trang này"
-          >
-            <Printer className="w-4 h-4" />
-            <span className="hidden sm:inline">In Bài Tập</span>
-          </button>
+          {role === 'teacher' && (
+            <button 
+              onClick={() => window.print()}
+              disabled={!analysis}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              title="In đề bài hoặc trang này"
+            >
+              <Printer className="w-4 h-4" />
+              <span className="hidden sm:inline">In Bài Tập</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -513,12 +759,15 @@ export default function App() {
       <div className="flex-1 flex flex-col lg:flex-row items-stretch">
         
         {/* Left column sidebar templates */}
-        <AppSidebar
-          history={history}
-          onSelectFunction={handleAnalyze}
-          onClearHistory={handleClearHistory}
-          activeFunction={functionInput}
-        />
+        {((role === 'teacher') || (role === 'student' && showHistory)) && (
+          <AppSidebar
+            history={history}
+            onSelectFunction={handleAnalyze}
+            onClearHistory={handleClearHistory}
+            activeFunction={functionInput}
+            role={role}
+          />
+        )}
 
         {/* Right column main content panel */}
         <main className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col gap-6 ${showExplanation ? 'max-w-7xl' : 'max-w-5xl'} mx-auto w-full transition-all duration-300`}>
@@ -531,7 +780,7 @@ export default function App() {
                 Khảo Sát & Vẽ Bảng Biến Thiên Hàm Số
               </h2>
               <p className="text-xs text-slate-400">
-                Nhập công thức toán học dưới dạng chuẩn. Hệ thống AI thông minh sẽ phân tích tập xác định, tính đạo hàm, giới hạn và lập bảng biến thiên đầy đủ.
+                Nhập công thức toán học tự do hoặc chọn một mẫu hàm số trực quan dưới đây để tự điền các hệ số dễ dàng.
               </p>
             </div>
 
@@ -540,65 +789,293 @@ export default function App() {
                 e.preventDefault();
                 handleAnalyze(functionInput);
               }}
-              className="flex flex-col sm:flex-row gap-2 mt-1"
+              className="flex flex-col sm:flex-row gap-2.5 mt-1"
             >
-              <div className="flex-grow relative">
-                <input
-                  type="text"
+              <div className="flex-grow">
+                <MathWYSIWYMInput
+                  inputRef={inputRef}
                   value={functionInput}
-                  onChange={(e) => setFunctionInput(e.target.value)}
+                  onChange={(val) => {
+                    setFunctionInput(val);
+                    setSelectedTemplate(null);
+                  }}
+                  onSubmit={() => {
+                    if (functionInput.trim()) {
+                      handleAnalyze(functionInput);
+                    }
+                  }}
                   placeholder="Nhập hàm số, ví dụ: (2x - 1)/(x + 1) hoặc x^3 - 3*x + 2"
-                  className="w-full h-11 pl-4 pr-10 font-mono text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all shadow-inner bg-slate-50/50"
                   disabled={isLoading}
                 />
-                
-                {/* Clear button if input exists */}
-                {functionInput && (
-                  <button
-                    type="button"
-                    onClick={() => setFunctionInput('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    ×
-                  </button>
-                )}
               </div>
               
               <button
                 type="submit"
                 disabled={isLoading || !functionInput.trim()}
-                className="h-11 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md shadow-indigo-200 hover:shadow-indigo-300 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-[56px] px-8 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-100 hover:shadow-indigo-200 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed sm:w-auto w-full shrink-0"
               >
                 {isLoading ? 'Đang phân tích...' : 'Phân Tích'}
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
 
-            {/* Quick Helper Math buttons */}
-            <div className="flex flex-wrap items-center gap-1.5 mt-1 border-t border-slate-100 pt-3">
-              <span className="text-xs font-semibold text-slate-400 mr-1 select-none">Nhập nhanh:</span>
-              {[
-                { label: 'x²', val: '^2' },
-                { label: 'x³', val: '^3' },
-                { label: 'căn(x)', val: 'sqrt(' },
-                { label: 'e^x', val: 'e^x' },
-                { label: 'ln(x)', val: 'ln(' },
-                { label: 'sin(x)', val: 'sin(' },
-                { label: 'cos(x)', val: 'cos(' },
-                { label: '+', val: ' + ' },
-                { label: '-', val: ' - ' },
-                { label: '*', val: '*' },
-                { label: '/', val: '/' },
-              ].map((sym, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => handleAppendSymbol(sym.val)}
-                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-600 font-mono text-xs rounded transition-colors"
-                >
-                  {sym.label}
-                </button>
-              ))}
+            {/* INTUITIVE MATH TEMPLATE BUILDER (Desmos/GeoGebra Style) */}
+            <div className="border-t border-slate-100 pt-4 mt-2">
+              <div className="flex flex-col gap-3">
+                <span className="text-xs font-bold tracking-wide text-slate-500 uppercase select-none">
+                  Trình dựng công thức trực quan (Chọn mẫu điền khuyết)
+                </span>
+                
+                {/* Preset select tabs */}
+                <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1 rounded-xl w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTemplate(null)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      selectedTemplate === null
+                        ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/50'
+                        : 'text-slate-600 hover:bg-slate-200/50'
+                    }`}
+                  >
+                    Tự nhập tự do
+                  </button>
+                  {[
+                    { id: 'cubic', label: 'Hàm Bậc 3' },
+                    { id: 'quartic', label: 'Trùng Phương' },
+                    { id: 'rational', label: 'Nhất Biến (Bậc 1/1)' },
+                    { id: 'sqrt', label: 'Căn Thức' },
+                    { id: 'log_exp', label: 'Mũ & Logarit' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setSelectedTemplate(tab.id as any)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        selectedTemplate === tab.id
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-200/50'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Interactive visual slots form */}
+                {selectedTemplate && (
+                  <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-xl flex flex-col items-center justify-center gap-3 animate-in fade-in zoom-in-95 duration-200">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                      Hãy thay đổi các giá trị ở ô trống bên dưới để tạo hàm số của bạn
+                    </span>
+                    
+                    {/* Cubic Layout */}
+                    {selectedTemplate === 'cubic' && (
+                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
+                        <span className="text-indigo-600 italic font-mono">y</span>
+                        <span>=</span>
+                        <input
+                          type="text"
+                          value={tempValues.cubic_a}
+                          onChange={(e) => updateTempValue('cubic_a', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="a"
+                        />
+                        <span>x³</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.cubic_b}
+                          onChange={(e) => updateTempValue('cubic_b', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="b"
+                        />
+                        <span>x²</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.cubic_c}
+                          onChange={(e) => updateTempValue('cubic_c', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="c"
+                        />
+                        <span>x</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.cubic_d}
+                          onChange={(e) => updateTempValue('cubic_d', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="d"
+                        />
+                      </div>
+                    )}
+
+                    {/* Quartic Layout */}
+                    {selectedTemplate === 'quartic' && (
+                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
+                        <span className="text-indigo-600 italic font-mono">y</span>
+                        <span>=</span>
+                        <input
+                          type="text"
+                          value={tempValues.quartic_a}
+                          onChange={(e) => updateTempValue('quartic_a', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="a"
+                        />
+                        <span>x⁴</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.quartic_b}
+                          onChange={(e) => updateTempValue('quartic_b', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="b"
+                        />
+                        <span>x²</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.quartic_c}
+                          onChange={(e) => updateTempValue('quartic_c', e.target.value)}
+                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="c"
+                        />
+                      </div>
+                    )}
+
+                    {/* Rational Layout */}
+                    {selectedTemplate === 'rational' && (
+                      <div className="flex items-center gap-3 text-base font-bold text-slate-700 font-sans">
+                        <span className="text-indigo-600 italic font-mono">y</span>
+                        <span>=</span>
+                        <div className="flex flex-col items-center gap-1.5">
+                          {/* Numerator */}
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={tempValues.rational_a}
+                              onChange={(e) => updateTempValue('rational_a', e.target.value)}
+                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="a"
+                            />
+                            <span className="text-sm font-bold">x</span>
+                            <span className="text-slate-400 font-normal">+</span>
+                            <input
+                              type="text"
+                              value={tempValues.rational_b}
+                              onChange={(e) => updateTempValue('rational_b', e.target.value)}
+                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="b"
+                            />
+                          </div>
+                          {/* Fraction Line */}
+                          <div className="w-full h-[2px] bg-slate-300 rounded"></div>
+                          {/* Denominator */}
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={tempValues.rational_c}
+                              onChange={(e) => updateTempValue('rational_c', e.target.value)}
+                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="c"
+                            />
+                            <span className="text-sm font-bold">x</span>
+                            <span className="text-slate-400 font-normal">+</span>
+                            <input
+                              type="text"
+                              value={tempValues.rational_d}
+                              onChange={(e) => updateTempValue('rational_d', e.target.value)}
+                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="d"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Sqrt Layout */}
+                    {selectedTemplate === 'sqrt' && (
+                      <div className="flex items-center gap-2 text-base font-bold text-slate-700 font-sans">
+                        <span className="text-indigo-600 italic font-mono">y</span>
+                        <span>=</span>
+                        <div className="flex items-stretch bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 shadow-sm">
+                          <span className="text-xl font-light text-slate-400 mr-1 select-none">√</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-300 font-light select-none">(</span>
+                            <input
+                              type="text"
+                              value={tempValues.sqrt_a}
+                              onChange={(e) => updateTempValue('sqrt_a', e.target.value)}
+                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="a"
+                            />
+                            <span>x²</span>
+                            <span className="text-slate-400 font-normal">+</span>
+                            <input
+                              type="text"
+                              value={tempValues.sqrt_b}
+                              onChange={(e) => updateTempValue('sqrt_b', e.target.value)}
+                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="b"
+                            />
+                            <span>x</span>
+                            <span className="text-slate-400 font-normal">+</span>
+                            <input
+                              type="text"
+                              value={tempValues.sqrt_c}
+                              onChange={(e) => updateTempValue('sqrt_c', e.target.value)}
+                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                              placeholder="c"
+                            />
+                            <span className="text-slate-300 font-light select-none">)</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Log Exp Layout */}
+                    {selectedTemplate === 'log_exp' && (
+                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
+                        <span className="text-indigo-600 italic font-mono">y</span>
+                        <span>=</span>
+                        <input
+                          type="text"
+                          value={tempValues.logexp_a}
+                          onChange={(e) => updateTempValue('logexp_a', e.target.value)}
+                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="a"
+                        />
+                        {/* Selector for ln vs e^ */}
+                        <select
+                          value={tempValues.logexp_type}
+                          onChange={(e) => updateTempValue('logexp_type', e.target.value)}
+                          className="h-8 px-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none"
+                        >
+                          <option value="ln">ln(</option>
+                          <option value="e">e^(</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={tempValues.logexp_b}
+                          onChange={(e) => updateTempValue('logexp_b', e.target.value)}
+                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="b"
+                        />
+                        <span>x</span>
+                        <span>)</span>
+                        <span className="text-slate-400 font-normal">+</span>
+                        <input
+                          type="text"
+                          value={tempValues.logexp_c}
+                          onChange={(e) => updateTempValue('logexp_c', e.target.value)}
+                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
+                          placeholder="c"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
 
@@ -660,121 +1137,81 @@ export default function App() {
               {/* LEFT COLUMN: SURVEY CARDS, BBT & CODE EXPORTS */}
               <div className={`${showExplanation ? 'lg:col-span-3' : ''} flex flex-col gap-6`}>
               
-              {/* ANALYSIS SUMMARY INFOCARDS */}
-              <section className="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-sm">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Hàm số đang khảo sát</span>
-                    <h2 className="font-display font-extrabold text-2xl text-slate-900 select-all">
-                      y = {analysis.functionStr}
-                    </h2>
-                  </div>
-                  
-                  {/* Styled block math of the function */}
-                  <div className="bg-indigo-50/50 border border-indigo-100/40 px-4 py-2.5 rounded-xl self-start md:self-auto flex items-center justify-center font-medium text-indigo-950">
-                    <span className="text-xs font-semibold text-slate-400 mr-2 select-none">LaTeX:</span>
-                    <VisualBBTFormula latex={analysis.functionLatex} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-                  {/* Tập xác định Card */}
-                  <div className="bg-slate-50/70 border border-slate-200 p-4 rounded-xl flex flex-col gap-1.5">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 select-none">
-                      <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-                      Tập Xác Định (TXD)
-                    </span>
-                    <div className="text-base font-bold text-slate-800">
-                      <VisualBBTFormula latex={analysis.txd} />
-                    </div>
-                  </div>
-
-                  {/* Đạo hàm bậc nhất Card */}
-                  <div className="bg-slate-50/70 border border-slate-200 p-4 rounded-xl flex flex-col gap-1.5">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 select-none">
-                      <Calculator className="w-3.5 h-3.5 text-indigo-400" />
-                      Đạo Hàm Bậc Nhất y'
-                    </span>
-                    <div className="text-base font-bold text-slate-800">
-                      <VisualBBTFormula latex={analysis.derivative} />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
               {/* TABLE OF VARIATIONS MAIN BOARD */}
               <section className="flex flex-col gap-4">
                 
                 {/* Mode Selector Tabs (No-Print) */}
-                <div className="flex items-center justify-between no-print border-b border-slate-200 pb-1">
-                  <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
-                    <button
-                      onClick={() => {
-                        setMode('view');
-                        setScore(null);
-                        setShowResults(false);
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                        mode === 'view'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      Xem Bảng Biến Thiên
-                    </button>
-                    
-                    <button
-                      onClick={() => {
-                        setMode('teacher');
-                        setScore(null);
-                        setShowResults(false);
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                        mode === 'teacher'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <Settings className="w-3.5 h-3.5" />
-                      Thiết Kế Đề Bài (Giáo Viên)
-                    </button>
-                    
-                    <button
-                      onClick={() => {
-                        setMode('student');
-                        // Auto apply a random mask if none is configured, to keep it fun
-                        if (maskedCellIds.size === 0) {
-                          handleApplyAutoMask('random');
-                        }
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                        mode === 'student'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <GraduationCap className="w-3.5 h-3.5" />
-                      Làm Bài Tập (Học Sinh)
-                    </button>
-                  </div>
+                {role === 'teacher' && (
+                  <div className="flex items-center justify-between no-print border-b border-slate-200 pb-1">
+                    <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+                      <button
+                        onClick={() => {
+                          setMode('view');
+                          setScore(null);
+                          setShowResults(false);
+                        }}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                          mode === 'view'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Xem Bảng Biến Thiên
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setMode('teacher');
+                          setScore(null);
+                          setShowResults(false);
+                        }}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                          mode === 'teacher'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        Thiết Kế Đề Bài
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setMode('student');
+                          // Auto apply a random mask if none is configured, to keep it fun
+                          if (maskedCellIds.size === 0) {
+                            handleApplyAutoMask('random');
+                          }
+                        }}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                          mode === 'student'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <GraduationCap className="w-3.5 h-3.5" />
+                        Làm Thử Bài Tập
+                      </button>
+                    </div>
 
-                  {/* Indicator info badges */}
-                  <div className="text-xs font-semibold text-slate-400 hidden sm:block">
-                    {mode === 'teacher' && (
-                      <span className="text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <Lightbulb className="w-3.5 h-3.5 animate-pulse" />
-                        Bấm trực tiếp vào các ô bên dưới để "đục lỗ" đề bài
-                      </span>
-                    )}
-                    {mode === 'student' && (
-                      <span className="text-amber-600 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <HelpCircle className="w-3.5 h-3.5" />
-                        Điền khuyết vào các ô màu cam bên dưới và nộp bài
-                      </span>
-                    )}
+                    {/* Indicator info badges */}
+                    <div className="text-xs font-semibold text-slate-400 hidden sm:block">
+                      {mode === 'teacher' && (
+                        <span className="text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <Lightbulb className="w-3.5 h-3.5 animate-pulse" />
+                          Bấm trực tiếp vào các ô bên dưới để "đục lỗ" đề bài
+                        </span>
+                      )}
+                      {mode === 'student' && (
+                        <span className="text-amber-600 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <HelpCircle className="w-3.5 h-3.5" />
+                          Điền khuyết vào các ô màu cam bên dưới và nộp bài
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* VISUAL BBT BOARD CONTAINER */}
                 <div className="relative">
@@ -980,58 +1417,77 @@ export default function App() {
               </section>
 
               {/* DYNAMIC LATEX EXPORT PANEL (STANDARD FULL CODE) */}
-              <section className="bg-slate-900 text-slate-200 rounded-2xl p-5 md:p-6 shadow-md border border-slate-800 no-print">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
-                      <FileCode className="w-5 h-5" />
+              {role === 'teacher' && (
+                <section className="bg-slate-900 text-slate-200 rounded-2xl p-5 md:p-6 shadow-md border border-slate-800 no-print">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+                        <FileCode className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-bold text-sm md:text-base text-white">
+                          Mã LaTeX Gốc (Đầy đủ)
+                        </h3>
+                        <p className="text-xs text-slate-400">
+                          Vẽ bảng biến thiên hoàn chỉnh sử dụng thư viện <code className="bg-slate-800 text-slate-300 px-1 py-0.5 rounded font-mono text-[10px]">tkz-tab</code>
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-display font-bold text-sm md:text-base text-white">
-                        Mã LaTeX Gốc (Đầy đủ)
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Vẽ bảng biến thiên hoàn chỉnh sử dụng thư viện <code className="bg-slate-800 text-slate-300 px-1 py-0.5 rounded font-mono text-[10px]">tkz-tab</code>
-                      </p>
-                    </div>
+
+                    <button
+                      onClick={() => handleCopyCode(true)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold rounded-lg text-white flex items-center gap-1 shadow-md shadow-indigo-950/20 active:scale-95 transition-all"
+                    >
+                      {isCopiedFull ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-white" />
+                          Đã sao chép!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          Sao chép mã gốc
+                        </>
+                      )}
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => handleCopyCode(true)}
-                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold rounded-lg text-white flex items-center gap-1 shadow-md shadow-indigo-950/20 active:scale-95 transition-all"
-                  >
-                    {isCopiedFull ? (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-white" />
-                        Đã sao chép!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        Sao chép mã gốc
-                      </>
-                    )}
-                  </button>
-                </div>
+                  <div className="bg-slate-950 p-4 rounded-xl font-mono text-[11px] md:text-xs text-indigo-300/90 overflow-x-auto max-h-56 leading-relaxed border border-slate-850">
+                    <pre>{analysis.latex_code}</pre>
+                  </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl font-mono text-[11px] md:text-xs text-indigo-300/90 overflow-x-auto max-h-56 leading-relaxed border border-slate-850">
-                  <pre>{analysis.latex_code}</pre>
-                </div>
-
-                <div className="mt-3.5 bg-indigo-950/20 border border-indigo-900/30 p-3 rounded-lg text-xs text-indigo-300 flex items-start gap-2 select-none leading-relaxed">
-                  <span className="text-indigo-400 mt-0.5"><Lightbulb className="w-4 h-4 flex-shrink-0" /></span>
-                  <p>
-                    <strong>Mẹo sử dụng LaTeX:</strong> Hãy đảm bảo bạn đã khai báo gói gói lệnh <code className="bg-indigo-900/40 text-indigo-100 px-1 py-0.5 rounded font-mono">{"\\usepackage{tkz-tab}"}</code> trong phần Khai báo (Preamble) của tài liệu LaTeX trước khi sử dụng đoạn mã trên.
-                  </p>
-                </div>
-              </section>
+                  <div className="mt-3.5 bg-indigo-950/20 border border-indigo-900/30 p-3 rounded-lg text-xs text-indigo-300 flex items-start gap-2 select-none leading-relaxed">
+                    <span className="text-indigo-400 mt-0.5"><Lightbulb className="w-4 h-4 flex-shrink-0" /></span>
+                    <p>
+                      <strong>Mẹo sử dụng LaTeX:</strong> Hãy đảm bảo bạn đã khai báo gói gói lệnh <code className="bg-indigo-900/40 text-indigo-100 px-1 py-0.5 rounded font-mono">{"\\usepackage{tkz-tab}"}</code> trong phần Khai báo (Preamble) của tài liệu LaTeX trước khi sử dụng đoạn mã trên.
+                    </p>
+                  </div>
+                </section>
+              )}
 
               </div>
 
               {/* RIGHT COLUMN: STEP-BY-STEP MATHEMATICAL EXPLANATION */}
               {showExplanation && (
                 <div className="lg:col-span-2 flex flex-col gap-6 h-fit lg:sticky lg:top-[90px]">
-                  <ExplanationPanel steps={analysis.explanation_steps} />
+                  <ExplanationPanel 
+                    steps={analysis.explanation_steps} 
+                    bbtElement={
+                      <div className="border border-indigo-100 rounded-xl overflow-hidden bg-white shadow-sm mt-3 mb-1">
+                        <VisualBBT
+                          analysis={analysis}
+                          isTeacherMode={false}
+                          isStudentMode={false}
+                          maskedCellIds={new Set()}
+                          userAnswers={{}}
+                          showResults={false}
+                          onToggleMask={() => {}}
+                          onAnswerChange={() => {}}
+                          showGraph={false}
+                        />
+                      </div>
+                    }
+                  />
                 </div>
               )}
 

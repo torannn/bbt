@@ -7,7 +7,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as math from 'mathjs';
 import { XPoint, FunctionAnalysis, YPrimePointSymbol, YPrimeIntervalSymbol, YPointValue } from '../types';
 import { MathLaTeX } from './MathLaTeX';
-import { Eye, EyeOff, Check, X, ZoomIn, ZoomOut, RotateCcw, Scale } from 'lucide-react';
+import { Eye, EyeOff, Check, X, ZoomIn, ZoomOut, RotateCcw, Scale, Maximize2, Minimize2, SlidersHorizontal, ChevronRight, ChevronLeft } from 'lucide-react';
 
 interface VisualBBTProps {
   analysis: FunctionAnalysis;
@@ -53,6 +53,8 @@ export function VisualBBT({
   // Graph scale mode and zoom factor states
   const [scaleMode, setScaleMode] = useState<'bbt' | 'linear'>('linear');
   const [zoomFactor, setZoomFactor] = useState<number>(1.0);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState<boolean>(false);
 
   const activeIntervalIdx = useMemo(() => {
     if (hoverX === null || intervalBounds.length === 0) return -1;
@@ -126,7 +128,7 @@ export function VisualBBT({
       observer.disconnect();
       window.removeEventListener('resize', updateCenters);
     };
-  }, [analysis, N]);
+  }, [analysis, N, isFullscreen, scaleMode]);
 
   // Clean mathjs compiled function
   const compiledFn = useMemo(() => {
@@ -337,7 +339,7 @@ export function VisualBBT({
   }, [colCenters, compiledFn, x_points, scaleMode]);
 
   const { yMin, yMax } = yRange;
-  const svgHeight = 220; // Taller for high mathematical accuracy!
+  const svgHeight = 350; // Taller for high mathematical accuracy!
 
   const mapYToPixel = (y: number): number => {
     if (isNaN(y) || !isFinite(y)) return NaN;
@@ -441,18 +443,19 @@ export function VisualBBT({
     const px = e.clientX - rect.left;
 
     if (px >= colCenters[0] && px <= colCenters[colCenters.length - 1]) {
-      // Snapping check: if we are within 14px of any column center, snap exactly to it
+      // Snapping check: if we are within 14px of any milestone, snap exactly to it
       let targetPx = px;
       let targetXVal: number | null = null;
       
       for (let k = 0; k < colCenters.length; k++) {
-        if (Math.abs(px - colCenters[k]) < 14) {
-          targetPx = colCenters[k];
-          const p = x_points[k];
-          if (p.type !== 'infinity' && p.value !== undefined) {
+        const p = x_points[k];
+        if (p.type !== 'infinity' && p.value !== undefined) {
+          const milestonePx = scaleMode === 'linear' ? xToPixel(p.value) : colCenters[k];
+          if (Math.abs(px - milestonePx) < 14) {
+            targetPx = milestonePx;
             targetXVal = p.value;
+            break;
           }
-          break;
         }
       }
 
@@ -476,13 +479,13 @@ export function VisualBBT({
 
   const isReady = colCenters.length === N && colCenters.every(c => c > 0);
 
-  // Helper to map positions ('top', 'middle', 'bottom') to SVG Y coordinates (out of 144px height)
+  // Helper to map positions ('top', 'middle', 'bottom') to SVG Y coordinates (out of 220px height)
   const getPositionY = (pos: 'top' | 'middle' | 'bottom') => {
     switch (pos) {
       case 'top': return 24;
-      case 'middle': return 72;
-      case 'bottom': return 120;
-      default: return 72;
+      case 'middle': return 110;
+      case 'bottom': return 196;
+      default: return 110;
     }
   };
 
@@ -688,25 +691,53 @@ export function VisualBBT({
     );
   };
 
-  const gridStyle = {
-    display: 'grid',
-    gridTemplateColumns: `minmax(64px, 80px) ${Array.from({ length: N }).map((_, i) => `minmax(56px, max-content) ${i < N - 1 ? '1fr' : ''}`).join(' ').trim()}`,
-  };
+  const gridStyle = useMemo(() => {
+    if (scaleMode === 'linear') {
+      // Calculate mathematical interval lengths
+      const intervals = Array.from({ length: N - 1 }).map((_, i) => {
+        const pLeft = x_points[i];
+        const pRight = x_points[i + 1];
+        const leftVal = pLeft.type === 'infinity' ? xStart : pLeft.value!;
+        const rightVal = pRight.type === 'infinity' ? xEnd : pRight.value!;
+        return Math.max(0.1, rightVal - leftVal);
+      });
+      
+      // Map them to fr weights
+      const cols = Array.from({ length: N }).map((_, i) => {
+        const milestoneCol = `minmax(56px, max-content)`;
+        if (i < N - 1) {
+          const intervalWeight = intervals[i];
+          return `${milestoneCol} ${intervalWeight.toFixed(4)}fr`;
+        }
+        return milestoneCol;
+      }).join(' ');
 
-  return (
-    <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm print-card">
-      <div 
-        ref={containerRef}
-        style={gridStyle} 
-        className="min-w-[650px] font-sans text-sm select-none relative"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-      >
+      return {
+        display: 'grid',
+        gridTemplateColumns: `minmax(64px, 80px) ${cols}`,
+      };
+    } else {
+      // Uniform 1fr intervals
+      return {
+        display: 'grid',
+        gridTemplateColumns: `minmax(64px, 80px) ${Array.from({ length: N }).map((_, i) => `minmax(56px, max-content) ${i < N - 1 ? '1fr' : ''}`).join(' ').trim()}`,
+      };
+    }
+  }, [scaleMode, N, x_points, xStart, xEnd]);
+
+  const mainContent = (
+    <div 
+      ref={containerRef}
+      style={gridStyle} 
+      className="min-w-[650px] font-sans text-sm select-none relative"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
         
         {/* ROW 0: GRAPH PLOT OVERVIEW */}
         {showGraph && (
           <>
-            <div className="flex flex-col items-center justify-center bg-slate-100/70 border-r border-b border-slate-200 font-bold text-slate-700 py-3 min-h-[220px]">
+            <div className="flex flex-col items-center justify-center bg-slate-100/70 border-r border-b border-slate-200 font-bold text-slate-700 py-3 min-h-[350px]">
               <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Đồ thị</div>
               <div className="text-sm text-indigo-600 bg-indigo-50 px-2 py-1 rounded font-mono font-medium max-w-[70px] truncate">
                 y = f(x)
@@ -715,7 +746,7 @@ export function VisualBBT({
             <div 
               ref={svgContainerRef}
               style={{ gridColumn: '2 / -1' }} 
-              className="relative h-[220px] border-b border-slate-200 bg-slate-50/20 overflow-hidden"
+              className="relative h-[350px] border-b border-slate-200 bg-slate-50/20 overflow-hidden"
             >
               {isReady ? (
                 <>
@@ -779,14 +810,14 @@ export function VisualBBT({
                               y1={py} 
                               x2={colCenters[N-1] - svgLeft} 
                               y2={py} 
-                              stroke="#10b981" 
+                              stroke="#f43f5e" 
                               strokeWidth="1.2" 
                               strokeDasharray="4 3" 
                             />
                             <text 
                               x={colCenters[0] - svgLeft + 10} 
                               y={py - 4} 
-                              fill="#059669" 
+                              fill="#e11d48" 
                               fontSize="9" 
                               fontFamily="monospace"
                               className="select-none"
@@ -870,14 +901,14 @@ export function VisualBBT({
                                     cx={px - svgLeft} 
                                     cy={py} 
                                     r="5" 
-                                    fill="#4f46e5" 
+                                    fill="#f43f5e" 
                                     stroke="#ffffff" 
                                     strokeWidth="1.5" 
                                   />
                                   <text 
                                     x={px - svgLeft + 8} 
                                     y={py > svgHeight / 2 ? py - 8 : py + 14} 
-                                    fill="#4338ca" 
+                                    fill="#e11d48" 
                                     fontSize="9.5" 
                                     fontWeight="bold"
                                     className="select-none font-sans"
@@ -917,70 +948,107 @@ export function VisualBBT({
                   </svg>
 
                   {/* FLOATING CONTROLS TOOLBAR */}
-                  <div className="absolute top-3 right-3 bg-white/95 border border-slate-200/85 px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-3 z-20 backdrop-blur-md text-xs no-print transition-all duration-200">
-                    {/* Scale Mode Picker */}
-                    <div className="flex items-center gap-1.5 border-r border-slate-100 pr-3 mr-1">
-                      <Scale className="w-3.5 h-3.5 text-indigo-500" />
-                      <span className="font-semibold text-slate-500 mr-0.5">Tỉ lệ:</span>
-                      <div className="flex gap-0.5 bg-slate-100 p-0.5 rounded-lg">
-                        <button
-                          onClick={() => setScaleMode('linear')}
-                          className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
-                            scaleMode === 'linear'
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-slate-500 hover:text-slate-800'
-                          }`}
-                          title="Tỉ lệ 1:1 chuẩn học đường, giữ đúng hình dạng đồ thị"
-                        >
-                          Chuẩn 1:1
-                        </button>
-                        <button
-                          onClick={() => setScaleMode('bbt')}
-                          className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
-                            scaleMode === 'bbt'
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-slate-500 hover:text-slate-800'
-                          }`}
-                          title="Căn dóng thẳng hàng tuyệt đối với các cột hoành độ BBT"
-                        >
-                          Căn dóng BBT
-                        </button>
-                      </div>
-                    </div>
+                  {isToolbarCollapsed ? (
+                    <button
+                      onClick={() => setIsToolbarCollapsed(false)}
+                      className="absolute top-3 right-3 bg-white/95 border border-slate-200/85 px-3 py-1.5 rounded-xl shadow-md flex items-center gap-2 z-20 backdrop-blur-md text-xs no-print hover:bg-slate-50 hover:border-slate-300 hover:text-indigo-600 transition-all text-slate-600 font-medium group"
+                      title="Hiện thanh công cụ phóng to / căn dóng"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500 group-hover:rotate-12 transition-transform" />
+                      <span className="font-bold text-[10px] uppercase tracking-wider text-slate-500 group-hover:text-indigo-600">Hiện công cụ</span>
+                    </button>
+                  ) : (
+                    <div className="absolute top-3 right-3 bg-white/95 border border-slate-200/85 px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-3 z-20 backdrop-blur-md text-xs no-print transition-all duration-200">
+                      
+                      {/* Collapse Button */}
+                      <button
+                        onClick={() => setIsToolbarCollapsed(true)}
+                        className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors mr-0.5"
+                        title="Ẩn bớt thanh công cụ (Thu gọn)"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
 
-                    {/* Zoom Controls */}
-                    {scaleMode === 'linear' && (
-                      <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-3 duration-200">
-                        <span className="font-semibold text-slate-500">Thu phóng:</span>
-                        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5">
+                      {/* Scale Mode Picker */}
+                      <div className="flex items-center gap-1.5 border-r border-slate-100 pr-3 mr-1">
+                        <Scale className="w-3.5 h-3.5 text-indigo-500" />
+                        <span className="font-semibold text-slate-500 mr-0.5">Tỉ lệ:</span>
+                        <div className="flex gap-0.5 bg-slate-100 p-0.5 rounded-lg">
                           <button
-                            onClick={() => setZoomFactor(prev => Math.max(0.3, prev - 0.1))}
-                            className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
-                            title="Thu nhỏ"
+                            onClick={() => setScaleMode('linear')}
+                            className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                              scaleMode === 'linear'
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                            title="Tỉ lệ 1:1 chuẩn học đường, giữ đúng hình dạng đồ thị"
                           >
-                            <ZoomOut className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="font-mono text-[11px] font-bold text-slate-700 min-w-[32px] text-center">
-                            {(zoomFactor * 100).toFixed(0)}%
-                          </span>
-                          <button
-                            onClick={() => setZoomFactor(prev => Math.min(3.0, prev + 0.1))}
-                            className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
-                            title="Phóng to"
-                          >
-                            <ZoomIn className="w-3.5 h-3.5" />
+                            Chuẩn 1:1
                           </button>
                           <button
-                            onClick={() => setZoomFactor(1.0)}
-                            className="p-1 border-l border-slate-200 pl-1.5 ml-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors"
-                            title="Đặt lại tỉ lệ 1:1 mặc định"
+                            onClick={() => setScaleMode('bbt')}
+                            className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                              scaleMode === 'bbt'
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                            title="Căn dóng thẳng hàng tuyệt đối với các cột hoành độ BBT"
                           >
-                            <RotateCcw className="w-3 h-3" />
+                            Căn dóng BBT
                           </button>
                         </div>
                       </div>
-                    )}
-                  </div>
+
+                      {/* Zoom Controls */}
+                      {scaleMode === 'linear' && (
+                        <div className="flex items-center gap-2 border-r border-slate-100 pr-3 mr-1 animate-in fade-in slide-in-from-right-3 duration-200">
+                          <span className="font-semibold text-slate-500">Thu phóng:</span>
+                          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5">
+                            <button
+                              onClick={() => setZoomFactor(prev => Math.max(0.3, prev - 0.1))}
+                              className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
+                              title="Thu nhỏ"
+                            >
+                              <ZoomOut className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="font-mono text-[11px] font-bold text-slate-700 min-w-[32px] text-center">
+                              {(zoomFactor * 100).toFixed(0)}%
+                            </span>
+                            <button
+                              onClick={() => setZoomFactor(prev => Math.min(3.0, prev + 0.1))}
+                              className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
+                              title="Phóng to"
+                            >
+                              <ZoomIn className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setZoomFactor(1.0)}
+                              className="p-1 border-l border-slate-200 pl-1.5 ml-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors"
+                              title="Đặt lại tỉ lệ 1:1 mặc định"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Fullscreen Workspace Button */}
+                      <div className="flex items-center pl-2 border-l border-slate-100">
+                        <button
+                          onClick={() => setIsFullscreen(!isFullscreen)}
+                          className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-1"
+                          title={isFullscreen ? "Thu nhỏ chế độ toàn màn hình" : "Phóng to toàn màn hình làm việc (Đồ thị & BBT)"}
+                        >
+                          {isFullscreen ? (
+                            <Minimize2 className="w-4 h-4" />
+                          ) : (
+                            <Maximize2 className="w-4 h-4" />
+                          )}
+                          <span className="hidden md:inline font-bold text-[10px] uppercase tracking-wider text-slate-400 hover:text-indigo-600 pl-0.5">Fullscreen</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -1074,7 +1142,7 @@ export function VisualBBT({
 
         {/* ROW 3: BIẾN THIÊN Y */}
         {/* Header column */}
-        <div className="flex items-center justify-center bg-slate-100/70 border-r border-slate-200 font-bold text-slate-700 py-3 min-h-[144px]">
+        <div className="flex items-center justify-center bg-slate-100/70 border-r border-slate-200 font-bold text-slate-700 py-3 min-h-[220px]">
           <MathLaTeX math="y" />
         </div>
         {/* Point & Interval columns */}
@@ -1084,7 +1152,7 @@ export function VisualBBT({
           const intervalSymbol = y_prime.intervals[i];
 
           // Determine arrow Y points
-          let startY = 72;
+          let startY = 110;
           if (yVal) {
             if (yVal.type === 'single') {
               startY = getPositionY(yVal.position);
@@ -1093,7 +1161,7 @@ export function VisualBBT({
             }
           }
 
-          let endY = 72;
+          let endY = 110;
           const nextYVal = y_row.points[i + 1];
           if (nextYVal) {
             if (nextYVal.type === 'single') {
@@ -1108,13 +1176,13 @@ export function VisualBBT({
               {/* Point values & Double line */}
               {isDiscontinuity ? (
                 /* Render Discontinuity cell */
-                <div className="h-36 relative border-r border-slate-200/60 flex justify-center items-stretch min-w-[96px] select-all px-1">
+                <div className="h-[220px] relative border-r border-slate-200/60 flex justify-center items-stretch min-w-[96px] select-all px-1">
                   {/* Left Limit */}
                   <div className="flex-1 flex justify-center py-2 h-full relative min-w-[36px]">
                     <div 
                       className="absolute left-1/2 -translate-x-1/2 w-full flex justify-center"
                       style={{ 
-                        top: yVal.type === 'discontinuity' ? `${getPositionY(yVal.positionLeft) - 16}px` : '72px'
+                        top: yVal.type === 'discontinuity' ? `${getPositionY(yVal.positionLeft) - 16}px` : '110px'
                       }}
                     >
                       {renderCellContent(
@@ -1138,7 +1206,7 @@ export function VisualBBT({
                     <div 
                       className="absolute left-1/2 -translate-x-1/2 w-full flex justify-center"
                       style={{ 
-                        top: yVal.type === 'discontinuity' ? `${getPositionY(yVal.positionRight) - 16}px` : '72px'
+                        top: yVal.type === 'discontinuity' ? `${getPositionY(yVal.positionRight) - 16}px` : '110px'
                       }}
                     >
                       {renderCellContent(
@@ -1153,11 +1221,11 @@ export function VisualBBT({
                 </div>
               ) : (
                 /* Render Single value cell */
-                <div className={`h-36 relative select-all ${i === N - 1 ? '' : 'border-r border-slate-200/60'}`}>
+                <div className={`h-[220px] relative select-all ${i === N - 1 ? '' : 'border-r border-slate-200/60'}`}>
                   <div 
                     className="absolute left-1/2 -translate-x-1/2 w-full flex justify-center px-1"
                     style={{ 
-                      top: yVal?.type === 'single' ? `${getPositionY(yVal.position) - 16}px` : '72px' 
+                      top: yVal?.type === 'single' ? `${getPositionY(yVal.position) - 16}px` : '110px' 
                     }}
                   >
                     {yVal && renderCellContent(
@@ -1173,10 +1241,10 @@ export function VisualBBT({
 
               {/* SVG Arrow in interval column */}
               {i < N - 1 && (
-                <div data-bbt-interval={i} className="h-36 relative select-none border-r border-slate-200/60">
+                <div data-bbt-interval={i} className="h-[220px] relative select-none border-r border-slate-200/60">
                   {intervalSymbol !== 'h' ? (
                     <div className="w-full h-full relative py-2">
-                      <svg className="w-full h-full text-slate-400 dark:text-slate-500" viewBox="0 0 100 144" preserveAspectRatio="none">
+                      <svg className="w-full h-full text-slate-400 dark:text-slate-500" viewBox="0 0 100 220" preserveAspectRatio="none">
                         <defs>
                           <marker 
                             id={`arrow-${i}`} 
@@ -1240,6 +1308,49 @@ export function VisualBBT({
         })}
 
       </div>
+  );
+
+  if (isFullscreen) {
+    return (
+      <div className="fixed inset-0 bg-slate-100/95 backdrop-blur-md z-50 p-4 sm:p-6 overflow-y-auto flex flex-col justify-start items-center gap-4 animate-in fade-in duration-200 no-print">
+        <div className="w-full max-w-[95%] bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 sm:p-6 flex flex-col gap-4">
+          {/* Workspace header */}
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg font-bold text-xs select-all">
+                  f(x) = {analysis.functionStr}
+                </span>
+                <span className="text-xs font-semibold text-slate-400">
+                  {isTeacherMode ? '(Giáo viên)' : isStudentMode ? '(Học sinh)' : '(Hiển thị)'}
+                </span>
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-slate-800 font-sans">
+                Toàn Màn Hình: Đồ Thị &amp; Bảng Biến Thiên
+              </h2>
+            </div>
+            <button
+              onClick={() => setIsFullscreen(false)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all shadow-sm border border-slate-200/50"
+              title="Thoát toàn màn hình"
+            >
+              <Minimize2 className="w-4 h-4 text-slate-500" />
+              <span>Thu nhỏ</span>
+            </button>
+          </div>
+          
+          {/* Main Visual Board */}
+          <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            {mainContent}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm print-card">
+      {mainContent}
     </div>
   );
 }

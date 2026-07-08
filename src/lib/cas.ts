@@ -67,6 +67,80 @@ export function toExactLatex(val: number): string {
   return val.toFixed(2).replace(/\.00$/, '');
 }
 
+// Convert an exact LaTeX back to an exact numerical value if possible
+export function parseLatexToVal(latex: string): number | null {
+  if (!latex) return null;
+  // If it's a simple integer, e.g. "-1", "2"
+  if (/^-?\d+$/.test(latex)) {
+    return parseInt(latex, 10);
+  }
+  // If it's a simple fraction, e.g. "\frac{1}{2}", "-\frac{3}{4}"
+  const fracMatch = latex.match(/^(-)?\\frac\{(\d+)\}\{(\d+)\}$/);
+  if (fracMatch) {
+    const isNeg = !!fracMatch[1];
+    const num = parseInt(fracMatch[2], 10);
+    const den = parseInt(fracMatch[3], 10);
+    return (isNeg ? -1 : 1) * (num / den);
+  }
+  // If it's a simple square root, e.g. "\sqrt{2}" or "-\sqrt{3}"
+  const sqrtMatch = latex.match(/^(-)?\\sqrt\{(\d+)\}$/);
+  if (sqrtMatch) {
+    const isNeg = !!sqrtMatch[1];
+    const radicand = parseInt(sqrtMatch[2], 10);
+    return (isNeg ? -1 : 1) * Math.sqrt(radicand);
+  }
+  // If it's a fraction of square root, e.g. "\frac{\sqrt{2}}{2}"
+  const sqrtFracMatch = latex.match(/^(-)?\\frac\{\\sqrt\{(\d+)\}\}\{(\d+)\}$/);
+  if (sqrtFracMatch) {
+    const isNeg = !!sqrtFracMatch[1];
+    const radicand = parseInt(sqrtFracMatch[2], 10);
+    const den = parseInt(sqrtFracMatch[3], 10);
+    return (isNeg ? -1 : 1) * (Math.sqrt(radicand) / den);
+  }
+  return null;
+}
+
+// Automatically expand implicit algebraic multiplication, e.g. 2x -> 2*x, x(x-1) -> x*(x-1), ab -> a*b, etc.
+export function preprocessImplicitMultiplication(expr: string): string {
+  if (!expr) return expr;
+  
+  let current = expr;
+  
+  // Replace dividing sign if any
+  current = current.replace(/÷/g, '/');
+  
+  // Step A: Digit followed by letter, parenthesis or backslash (like \sqrt)
+  // E.g. 2x -> 2*x, 3.5x -> 3.5*x, 2( -> 2*(, 2sqrt -> 2*sqrt
+  current = current.replace(/([0-9])\s*([a-zA-Z\(\\])/g, '$1*$2');
+  
+  // Step B: Closing parenthesis followed by opening parenthesis
+  // E.g. (x+1)(x+2) -> (x+1)*(x+2)
+  current = current.replace(/\)\s*\(/g, ')*(');
+  
+  // Step C: Closing parenthesis followed by letter or backslash
+  // E.g. (x+1)x -> (x+1)*x, (x+1)sin -> (x+1)*sin, (x+1)\sqrt -> (x+1)*\sqrt
+  current = current.replace(/\)\s*([a-zA-Z\\])/g, ')*$1');
+  
+  // Step D: Variable 'x' or 'e' followed by parenthesis
+  // E.g. x(x+1) -> x*(x+1), e(x) -> e*(x)
+  current = current.replace(/\b(x|e)\s*\(/gi, '$1*(');
+  
+  // Step E: Letter 'x' followed by another word (math function or constant) with space(s) in between
+  // E.g. "x sin" -> "x*sin", "x ln" -> "x*ln", "x e" -> "x*e"
+  current = current.replace(/\b(x)\s+([a-zA-Z])/gi, '$1*$2');
+  
+  // Step F: Letter 'x' followed directly by a standard math function (without spaces)
+  // E.g. xln(x) -> x*ln(x), xsin(x) -> x*sin(x)
+  current = current.replace(/\b(x)(ln|lg|log|sin|cos|tan|cot|sqrt|exp)\b/gi, '$1*$2');
+
+  // Step G: Single algebraic parameter letters (like a, b, c, d, m, k, n) followed by variable 'x' or open parenthesis '('
+  // E.g. ax -> a*x, mx -> m*x, a(x+1) -> a*(x+1)
+  current = current.replace(/\b([a-df-wyz])\s*x\b/gi, '$1*x');
+  current = current.replace(/\b([a-df-wyz])\s*\(/gi, '$1*(');
+
+  return current;
+}
+
 // Extract denominators to find poles
 function getDenominators(node: math.MathNode): string[] {
   const denoms: string[] = [];
@@ -166,6 +240,9 @@ export function analyzeFunctionCAS(functionStr: string): FunctionAnalysis {
     normalized = "x^3 - 3*x + 2";
   }
 
+  // Preprocess implicit multiplications like "2x" -> "2*x", "ab" -> "a*b", "x(x-1)" -> "x*(x-1)"
+  normalized = preprocessImplicitMultiplication(normalized);
+
   // Parse expression
   const node = math.parse(normalized);
   const functionLatex = node.toTex({ parenthesis: 'keep' });
@@ -216,11 +293,13 @@ export function analyzeFunctionCAS(functionStr: string): FunctionAnalysis {
   });
 
   uniqueMilestones.forEach(m => {
+    const exactLatex = toExactLatex(m.val);
+    const parsedVal = parseLatexToVal(exactLatex);
     x_points.push({
       id: `x-${pointCounter++}`,
-      latex: toExactLatex(m.val),
+      latex: exactLatex,
       type: m.type,
-      value: m.val
+      value: parsedVal !== null ? parsedVal : m.val
     });
   });
 
@@ -462,57 +541,61 @@ export function analyzeFunctionCAS(functionStr: string): FunctionAnalysis {
 
   // Step 1: TXD
   let txdLatex = 'D = \\mathbb{R}';
-  let txdContent = 'Hàm số xác định với mọi $x \\in \\mathbb{R}$.';
+  let txdContent = 'Tập xác định: $D = \\mathbb{R}$.';
   if (poles.length > 0) {
     const poleLatexList = poles.map(p => toExactLatex(p)).join('; ');
     txdLatex = `D = \\mathbb{R} \\setminus \\{${poleLatexList}\\}`;
-    txdContent = `Hàm số phân thức có điều kiện mẫu số khác 0.\n\nMẫu số triệt tiêu tại các điểm: $x = ${poleLatexList}$.\n\nDo đó, Tập xác định của hàm số là: $D = \\mathbb{R} \\setminus \\{${poleLatexList}\\}$.`;
+    txdContent = `Tập xác định: $D = \\mathbb{R} \\setminus \\{${poleLatexList}\\}$.`;
   }
   explanation_steps.push({
-    title: '1. Tập xác định (TXD)',
+    title: 'Bước 1. Tập xác định',
     content: txdContent
   });
 
   // Step 2: Đạo hàm
-  let derivativeExplanation = `Tính đạo hàm bậc nhất của hàm số:\n\n$$y' = ${derivative}$$\n\n`;
+  let derivativeExplanation = `Ta có đạo hàm $y' = ${derivative}$. `;
   if (criticals.length > 0) {
     const rootEquations = criticals.map(c => `x = ${toExactLatex(c)}`).join(', ');
-    derivativeExplanation += `Giải phương trình $y' = 0$, ta tìm được các nghiệm:\n\n$$${rootEquations}$$`;
+    derivativeExplanation += `Cho $y' = 0 \\Leftrightarrow ${rootEquations}$. `;
   } else {
-    derivativeExplanation += `Giải phương trình $y' = 0$ vô nghiệm (hoặc không có điểm cực trị thực trong miền xác định).`;
+    derivativeExplanation += `Ta thấy $y' \\neq 0$ với mọi $x \\in D$. `;
   }
+
+  if (poles.length > 0) {
+    const poleLatexList = poles.map(p => `$x = ${toExactLatex(p)}$`).join(', ');
+    derivativeExplanation += `Đạo hàm không xác định tại ${poleLatexList}.`;
+  }
+
   explanation_steps.push({
-    title: "2. Tính đạo hàm y' và tìm cực trị",
-    content: derivativeExplanation
+    title: "Bước 2: Tính đạo hàm y' và tìm các điểm tới hạn",
+    content: derivativeExplanation.trim()
   });
 
   // Step 3: Giới hạn và tiệm cận
-  let limitExplanation = `Khảo sát giới hạn của hàm số tại vô cực và các điểm gián đoạn:\n\n`;
+  let limitExplanation = `Tính các giá trị cực trị và giới hạn:\n`;
   if (poles.length > 0) {
+    limitExplanation += `* Tiệm cận đứng: `;
     poles.forEach(p => {
       const pLatex = toExactLatex(p);
-      limitExplanation += `* Tại điểm gián đoạn $x = ${pLatex}$:\n`;
-      limitExplanation += `  - Giới hạn bên trái: $\\lim_{x \\to ${pLatex}^-} y = \\pm\\infty$\n`;
-      limitExplanation += `  - Giới hạn bên phải: $\\lim_{x \\to ${pLatex}^+} y = \\pm\\infty$\n`;
-      limitExplanation += `  - Do đó, đường thẳng $x = ${pLatex}$ là **Tiệm cận đứng** của đồ thị hàm số.\n\n`;
+      limitExplanation += `$\\displaystyle \\lim_{x \\to ${pLatex}^-} y = \\pm\\infty$ và $\\displaystyle \\lim_{x \\to ${pLatex}^+} y = \\pm\\infty$, suy ra $x = ${pLatex}$ là tiệm cận đứng. `;
     });
+    limitExplanation += `\n`;
   }
-  limitExplanation += `* Giới hạn tại vô cực:\n`;
-  limitExplanation += `  - $\\lim_{x \\to -\\infty} y$ và $\\lim_{x \\to +\\infty} y$ được xác định dựa trên bậc cao nhất của đa thức hoặc phân thức.\n`;
+  limitExplanation += `* Giới hạn tại vô cực: $\\displaystyle \\lim_{x \\to -\\infty} y$ và $\\displaystyle \\lim_{x \\to +\\infty} y$ được xác định dựa trên hàm số (tiệm cận ngang nếu có).\n`;
   explanation_steps.push({
-    title: '3. Giới hạn tại vô cực và Tiệm cận',
-    content: limitExplanation
+    title: 'Bước 3: Lập bảng biến thiên đồng thời tính các giá trị cực trị, giới hạn tại vô cực, tiệm cận (nếu có)',
+    content: limitExplanation.trim()
   });
 
   // Step 4: Bảng biến thiên
-  let bbtExplanation = `Tổng hợp các thông tin trên vào Bảng biến thiên:\n\n`;
+  let bbtExplanation = `Kết luận các tính chất của hàm số:\n`;
   y_prime_intervals.forEach((sign, i) => {
     const leftX = x_points[i].latex;
     const rightX = x_points[i + 1].latex;
-    bbtExplanation += `* Trên khoảng $(${leftX}; ${rightX})$: $y' ${sign === '+' ? '> 0' : '< 0'}$, hàm số **${sign === '+' ? 'đồng biến' : 'nghịch biến'}**.\n`;
+    bbtExplanation += `* Hàm số **${sign === '+' ? 'đồng biến' : 'nghịch biến'}** trên khoảng $(${leftX}; ${rightX})$.\n`;
   });
   explanation_steps.push({
-    title: '4. Lập bảng biến thiên',
+    title: 'Bước 4: Lập bảng biến thiên và nêu kết luận: khoảng đơn điệu, cực trị, tiệm cận.',
     content: bbtExplanation
   });
 
@@ -525,6 +608,8 @@ export function analyzeFunctionCAS(functionStr: string): FunctionAnalysis {
     y_prime: { points: y_prime_points, intervals: y_prime_intervals },
     y_row,
     latex_code,
-    explanation_steps
+    explanation_steps,
+    poles,
+    criticals
   };
 }

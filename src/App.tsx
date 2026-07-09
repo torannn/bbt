@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react';
 import { MathWYSIWYMInput } from './components/MathWYSIWYMInput';
 import { VisualBBT } from './components/VisualBBT';
 import { ExplanationPanel } from './components/ExplanationPanel';
+import { ExtremaCalculator } from './components/ExtremaCalculator';
 import { MathLaTeX } from './components/MathLaTeX';
 import { FunctionAnalysis } from './types';
 import { 
@@ -27,14 +28,15 @@ import {
   AlertTriangle,
   Lightbulb,
   CornerDownRight,
-  Sparkles
+  Sparkles,
+  Menu,
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// Sidebar code in the same or separate file. We created Sidebar in `/src/components/Sidebar.tsx` but named it 'Sidebar'.
-// Let's import Sidebar correctly. Wait, our sidebar was created in `/src/components/Sidebar.tsx`.
-// So we can import it from `./components/Sidebar`.
-import { Sidebar as AppSidebar } from './components/Sidebar';
+
 
 // Predefined loading messages to keep user engaged during mathematical analysis
 const LOADING_MESSAGES = [
@@ -98,6 +100,11 @@ export default function App() {
   const [analysis, setAnalysis] = useState<FunctionAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // GTLN/GTNN custom range highlight states
+  const [highlightRange, setHighlightRange] = useState<[number, number] | null>(null);
+  const [highlightMaxPts, setHighlightMaxPts] = useState<{x: number, y: number}[]>([]);
+  const [highlightMinPts, setHighlightMinPts] = useState<{x: number, y: number}[]>([]);
+
   // Global role state
   const [role, setRole] = useState<'student' | 'teacher'>('student');
   
@@ -124,159 +131,9 @@ export default function App() {
   const [showExplanation, setShowExplanation] = useState<boolean>(true);
   const [showHistory, setShowHistory] = useState<boolean>(true);
 
-  // Visual Math Template Builder states
-  const [selectedTemplate, setSelectedTemplate] = useState<'cubic' | 'quartic' | 'rational' | 'sqrt' | 'log_exp' | null>(null);
-  const [tempValues, setTempValues] = useState<Record<string, string>>({
-    cubic_a: "1",
-    cubic_b: "0",
-    cubic_c: "-3",
-    cubic_d: "2",
-    quartic_a: "1",
-    quartic_b: "-2",
-    quartic_c: "-1",
-    rational_a: "2",
-    rational_b: "-1",
-    rational_c: "1",
-    rational_d: "1",
-    sqrt_a: "1",
-    sqrt_b: "0",
-    sqrt_c: "-1",
-    logexp_a: "1",
-    logexp_b: "1",
-    logexp_type: "ln",
-    logexp_c: "0"
-  });
-
-  const updateTempValue = (key: string, val: string) => {
-    setTempValues(prev => ({
-      ...prev,
-      [key]: val
-    }));
-  };
-
-  // Sync template values to functionInput
-  useEffect(() => {
-    if (!selectedTemplate) return;
-    
-    let formula = "";
-    if (selectedTemplate === 'cubic') {
-      const a = tempValues.cubic_a || "0";
-      const b = tempValues.cubic_b || "0";
-      const c = tempValues.cubic_c || "0";
-      const d = tempValues.cubic_d || "0";
-      
-      const terms = [];
-      if (a !== "0" && a !== "") {
-        terms.push(a === "1" ? "x^3" : a === "-1" ? "-x^3" : `${a}*x^3`);
-      }
-      if (b !== "0" && b !== "") {
-        const bSign = parseFloat(b) > 0 && terms.length > 0 ? "+" : "";
-        terms.push(`${bSign}${b === "1" ? "x^2" : b === "-1" ? "-x^2" : `${b}*x^2`}`);
-      }
-      if (c !== "0" && c !== "") {
-        const cSign = parseFloat(c) > 0 && terms.length > 0 ? "+" : "";
-        terms.push(`${cSign}${c === "1" ? "x" : c === "-1" ? "-x" : `${c}*x`}`);
-      }
-      if (d !== "0" && d !== "") {
-        const dSign = parseFloat(d) > 0 && terms.length > 0 ? "+" : "";
-        terms.push(`${dSign}${d}`);
-      }
-      formula = terms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
-      if (!formula) formula = "0";
-    } 
-    else if (selectedTemplate === 'quartic') {
-      const a = tempValues.quartic_a || "0";
-      const b = tempValues.quartic_b || "0";
-      const c = tempValues.quartic_c || "0";
-      
-      const terms = [];
-      if (a !== "0" && a !== "") {
-        terms.push(a === "1" ? "x^4" : a === "-1" ? "-x^4" : `${a}*x^4`);
-      }
-      if (b !== "0" && b !== "") {
-        const bSign = parseFloat(b) > 0 && terms.length > 0 ? "+" : "";
-        terms.push(`${bSign}${b === "1" ? "x^2" : b === "-1" ? "-x^2" : `${b}*x^2`}`);
-      }
-      if (c !== "0" && c !== "") {
-        const cSign = parseFloat(c) > 0 && terms.length > 0 ? "+" : "";
-        terms.push(`${cSign}${c}`);
-      }
-      formula = terms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
-      if (!formula) formula = "0";
-    }
-    else if (selectedTemplate === 'rational') {
-      const a = tempValues.rational_a || "0";
-      const b = tempValues.rational_b || "0";
-      const c = tempValues.rational_c || "1";
-      const d = tempValues.rational_d || "0";
-      
-      const numTerms = [];
-      if (a !== "0" && a !== "") {
-        numTerms.push(a === "1" ? "x" : a === "-1" ? "-x" : `${a}*x`);
-      }
-      if (b !== "0" && b !== "") {
-        const bSign = parseFloat(b) > 0 && numTerms.length > 0 ? "+" : "";
-        numTerms.push(`${bSign}${b}`);
-      }
-      const num = numTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
-      
-      const denTerms = [];
-      if (c !== "0" && c !== "") {
-        denTerms.push(c === "1" ? "x" : c === "-1" ? "-x" : `${c}*x`);
-      }
-      if (d !== "0" && d !== "") {
-        const dSign = parseFloat(d) > 0 && denTerms.length > 0 ? "+" : "";
-        denTerms.push(`${dSign}${d}`);
-      }
-      const den = denTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
-      
-      formula = `(${num || "0"})/(${den || "1"})`;
-    }
-    else if (selectedTemplate === 'sqrt') {
-      const a = tempValues.sqrt_a || "1";
-      const b = tempValues.sqrt_b || "0";
-      const c = tempValues.sqrt_c || "0";
-      
-      const insideTerms = [];
-      if (a !== "0" && a !== "") {
-        insideTerms.push(a === "1" ? "x^2" : a === "-1" ? "-x^2" : `${a}*x^2`);
-      }
-      if (b !== "0" && b !== "") {
-        const bSign = parseFloat(b) > 0 && insideTerms.length > 0 ? "+" : "";
-        insideTerms.push(`${bSign}${b === "1" ? "x" : b === "-1" ? "-x" : `${b}*x`}`);
-      }
-      if (c !== "0" && c !== "") {
-        const cSign = parseFloat(c) > 0 && insideTerms.length > 0 ? "+" : "";
-        insideTerms.push(`${cSign}${c}`);
-      }
-      const inside = insideTerms.join(" ").replace(/\s*\+\s*-/g, " - ").replace(/\s*\+\s*\+/g, " + ").trim();
-      formula = `sqrt(${inside || "0"})`;
-    }
-    else if (selectedTemplate === 'log_exp') {
-      const a = tempValues.logexp_a || "1";
-      const b = tempValues.logexp_b || "1";
-      const type = tempValues.logexp_type || "ln";
-      const c = tempValues.logexp_c || "0";
-      
-      let base = "";
-      const bPart = b === "1" ? "x" : b === "-1" ? "-x" : `${b}*x`;
-      
-      if (type === 'ln') {
-        base = a === "1" ? `ln(${bPart})` : a === "-1" ? `-ln(${bPart})` : `${a}*ln(${bPart})`;
-      } else { // e^x
-        base = a === "1" ? `e^(${bPart})` : a === "-1" ? `-e^(${bPart})` : `${a}*e^(${bPart})`;
-      }
-      
-      if (c !== "0" && c !== "") {
-        const cSign = parseFloat(c) > 0 ? " + " : " ";
-        formula = `${base}${cSign}${c}`;
-      } else {
-        formula = base;
-      }
-    }
-    
-    setFunctionInput(formula);
-  }, [selectedTemplate, tempValues]);
+  // Collapsible vertical sidebar and mobile navigation states
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   // Rotate loading messages
   useEffect(() => {
@@ -319,6 +176,11 @@ export default function App() {
     
     // Auto-mask clear when switching function
     setMaskedCellIds(new Set());
+    
+    // Reset range highlights
+    setHighlightRange(null);
+    setHighlightMaxPts([]);
+    setHighlightMinPts([]);
 
     try {
       const response = await fetch('/api/analyze-function', {
@@ -651,126 +513,224 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen text-slate-800 bg-slate-50 font-sans">
+    <div className="flex flex-row min-h-screen text-slate-800 bg-slate-50 font-sans overflow-x-hidden">
       
-      {/* 1. TOP HEADER BRANDBAR */}
-      <header className="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 py-3.5 px-4 md:px-6 z-30 flex items-center justify-between no-print shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center">
-            <Calculator className="w-5.5 h-5.5" />
+      {/* MOBILE TOP NAVBAR (Visible only on mobile/tablet screens < md) */}
+      <div className="md:hidden fixed top-0 left-0 right-0 h-[56px] bg-white border-b border-slate-200 px-4 flex items-center justify-between z-30 shadow-sm no-print">
+        <div className="flex items-center gap-2">
+          <Calculator className="w-5 h-5 text-indigo-650" />
+          <span className="font-bold text-sm text-slate-900">BBT Pro</span>
+          <span className="text-[10px] font-mono bg-indigo-50 text-indigo-600 px-1 py-0.5 rounded">v3.5</span>
+        </div>
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-850 transition-colors"
+        >
+          <Menu className="w-5.5 h-5.5" />
+        </button>
+      </div>
+
+      {/* Backdrop for mobile drawer */}
+      {isMobileMenuOpen && (
+        <div 
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-30 md:hidden no-print"
+        />
+      )}
+
+      {/* 1. VERTICAL HEADER SIDEBAR (Collapsible on md+, full Drawer on mobile) */}
+      <header className={`
+        fixed md:sticky top-0 left-0 h-screen bg-white border-r border-slate-200 flex flex-col justify-between z-40 transition-all duration-300 no-print shadow-md md:shadow-sm shrink-0
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        ${isSidebarExpanded ? 'w-64 p-5' : 'w-16 p-3 items-center'}
+      `}>
+        {/* Mobile close button */}
+        <button 
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="absolute top-4 right-4 md:hidden p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        {/* TOP BRAND PORTION */}
+        <div className="flex flex-col gap-6 w-full">
+          <div className="flex items-center gap-3 w-full overflow-hidden">
+            <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center shrink-0">
+              <Calculator className="w-5.5 h-5.5" />
+            </div>
+            {isSidebarExpanded && (
+              <div className="flex flex-col truncate">
+                <h1 className="font-display font-bold text-sm tracking-tight text-slate-905 flex items-center gap-1.5">
+                  Bảng Biến Thiên <span className="text-[10px] font-mono bg-indigo-50 text-indigo-605 border border-indigo-100 px-1 py-0.2 rounded">v3.5</span>
+                </h1>
+                <p className="text-[10px] text-slate-400 truncate">
+                  Khảo sát hàm số &amp; Bài tập
+                </p>
+              </div>
+            )}
           </div>
-          <div>
-            <h1 className="font-display font-bold text-base md:text-lg tracking-tight text-slate-900 flex items-center gap-2">
-              Bảng Biến Thiên <span className="text-xs font-mono bg-indigo-50 text-indigo-600 border border-indigo-100 px-1.5 py-0.5 rounded-md">Pro v3.5</span>
-            </h1>
-            <p className="text-xs text-slate-400 hidden sm:block">
-              Phân tích khảo sát hàm số, tự động tạo Bảng biến thiên, xuất LaTeX & Bài tập tương tác
-            </p>
+
+          {/* ROLE SWITCHER */}
+          <div className={`w-full flex ${isSidebarExpanded ? 'bg-slate-100 p-0.5 rounded-xl border border-slate-200' : 'flex-col gap-2'}`}>
+            {isSidebarExpanded ? (
+              <>
+                <button
+                  onClick={() => {
+                    setRole('student');
+                    setMode('view');
+                  }}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    role === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Học Sinh
+                </button>
+                <button
+                  onClick={() => {
+                    setRole('teacher');
+                    setMode('teacher');
+                  }}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    role === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Giáo Viên
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setRole('student');
+                    setMode('view');
+                  }}
+                  className={`p-2 rounded-xl transition-all relative group ${
+                    role === 'student' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  }`}
+                  title="Vai trò Học Sinh"
+                >
+                  <GraduationCap className="w-5 h-5" />
+                  <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">Học Sinh</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setRole('teacher');
+                    setMode('teacher');
+                  }}
+                  className={`p-2 rounded-xl transition-all relative group ${
+                    role === 'teacher' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  }`}
+                  title="Vai trò Giáo Viên"
+                >
+                  <Settings className="w-5 h-5" />
+                  <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">Giáo Viên</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* VIEW CONTROLS & TOGGLES */}
+          <div className="flex flex-col gap-2 w-full mt-2">
+            {isSidebarExpanded && (
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1.5">Bộ Tùy Chọn</span>
+            )}
+            
+            {role === 'student' && (
+              <button
+                onClick={() => setShowHistory(prev => !prev)}
+                className={`flex items-center gap-2.5 rounded-xl transition-all ${
+                  isSidebarExpanded 
+                    ? `px-3 py-2 text-xs font-bold ${showHistory ? 'bg-indigo-50 text-indigo-600' : 'text-slate-650 hover:bg-slate-100'}`
+                    : `p-2 justify-center relative group ${showHistory ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'text-slate-500 hover:bg-slate-100'}`
+                }`}
+                title="Bật/Tắt hiển thị lịch sử khảo sát"
+              >
+                <RotateCcw className="w-4 h-4" />
+                {isSidebarExpanded && <span>Lịch Sử</span>}
+                {!isSidebarExpanded && (
+                  <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">Xem Lịch Sử</span>
+                )}
+              </button>
+            )}
+
+            {analysis && role === 'teacher' && (
+              <>
+                <button
+                  onClick={() => setShowGraph(prev => !prev)}
+                  className={`flex items-center gap-2.5 rounded-xl transition-all ${
+                    isSidebarExpanded 
+                      ? `px-3 py-2 text-xs font-bold ${showGraph ? 'bg-indigo-50 text-indigo-600' : 'text-slate-650 hover:bg-slate-100'}`
+                      : `p-2 justify-center relative group ${showGraph ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'text-slate-500 hover:bg-slate-100'}`
+                  }`}
+                  title="Bật/Tắt hiển thị đồ thị"
+                >
+                  {showGraph ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  {isSidebarExpanded && <span>Xem Đồ Thị</span>}
+                  {!isSidebarExpanded && (
+                    <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">{showGraph ? 'Ẩn Đồ Thị' : 'Hiện Đồ Thị'}</span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setShowExplanation(prev => !prev)}
+                  className={`flex items-center gap-2.5 rounded-xl transition-all ${
+                    isSidebarExpanded 
+                      ? `px-3 py-2 text-xs font-bold ${showExplanation ? 'bg-indigo-50 text-indigo-600' : 'text-slate-650 hover:bg-slate-100'}`
+                      : `p-2 justify-center relative group ${showExplanation ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'text-slate-500 hover:bg-slate-100'}`
+                  }`}
+                  title="Bật/Tắt hiển thị lời giải chi tiết"
+                >
+                  <BookOpen className="w-4 h-4" />
+                  {isSidebarExpanded && <span>Xem Lời Giải</span>}
+                  {!isSidebarExpanded && (
+                    <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">{showExplanation ? 'Ẩn Lời Giải' : 'Hiện Lời Giải'}</span>
+                  )}
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Action controls */}
-        <div className="flex items-center gap-2">
-          {/* Global Role Switcher */}
-          <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 mr-2">
-            <button
-              onClick={() => {
-                setRole('student');
-                setMode('view');
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                role === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Học Sinh
-            </button>
-            <button
-              onClick={() => {
-                setRole('teacher');
-                setMode('teacher');
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                role === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Giáo Viên
-            </button>
-          </div>
-
-          {role === 'student' && (
-            <button
-              onClick={() => setShowHistory(prev => !prev)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                showHistory 
-                  ? 'bg-indigo-600 text-white shadow-sm' 
-                  : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-850'
-              }`}
-              title="Bật/Tắt hiển thị lịch sử khảo sát"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Lịch sử</span>
-            </button>
-          )}
-
-          {analysis && role === 'teacher' && (
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-              <button
-                onClick={() => setShowGraph(prev => !prev)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  showGraph 
-                    ? 'bg-indigo-600 text-white shadow-sm' 
-                    : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-850'
-                }`}
-                title="Bật/Tắt hiển thị đồ thị tương quan phía trên bảng biến thiên"
-              >
-                {showGraph ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                <span className="hidden sm:inline">Đồ thị</span>
-              </button>
-              <button
-                onClick={() => setShowExplanation(prev => !prev)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  showExplanation 
-                    ? 'bg-indigo-600 text-white shadow-sm' 
-                    : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-850'
-                }`}
-                title="Bật/Tắt hiển thị cột lời giải chi tiết từng bước ở bên phải"
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Bài giải</span>
-              </button>
-            </div>
-          )}
-
+        {/* BOTTOM CONTROLS */}
+        <div className="flex flex-col gap-3 w-full">
           {role === 'teacher' && (
             <button 
               onClick={() => window.print()}
               disabled={!analysis}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              className={`flex items-center rounded-xl transition-all ${
+                isSidebarExpanded 
+                  ? 'px-3 py-2.5 text-xs font-bold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed justify-center gap-2'
+                  : 'p-2 justify-center border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed relative group'
+              }`}
               title="In đề bài hoặc trang này"
             >
               <Printer className="w-4 h-4" />
-              <span className="hidden sm:inline">In Bài Tập</span>
+              {isSidebarExpanded && <span>In Bài Tập</span>}
+              {!isSidebarExpanded && (
+                <span className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap">In Bài Tập</span>
+              )}
             </button>
           )}
+
+          {/* Sidebar Collapse/Expand Toggle (Desktop only) */}
+          <button
+            onClick={() => setIsSidebarExpanded(!isSidebarExpanded)}
+            className="hidden md:flex items-center justify-center p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors w-full"
+            title={isSidebarExpanded ? "Thu gọn Sidebar" : "Mở rộng Sidebar"}
+          >
+            {isSidebarExpanded ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
         </div>
       </header>
 
-      {/* 2. MAIN LAYOUT WORKSPACE */}
-      <div className="flex-1 flex flex-col lg:flex-row items-stretch">
-        
-        {/* Left column sidebar templates */}
-        {((role === 'teacher') || (role === 'student' && showHistory)) && (
-          <AppSidebar
-            history={history}
-            onSelectFunction={handleAnalyze}
-            onClearHistory={handleClearHistory}
-            activeFunction={functionInput}
-            role={role}
-          />
-        )}
+      {/* 2. RIGHT CONTENT WORKSPACE */}
+      <div className="flex-1 flex flex-col min-h-screen min-w-0 overflow-y-auto mt-[56px] md:mt-0">
+        <div className="flex-grow flex flex-col lg:flex-row items-stretch">
+          
+          {/* Sidebar templates menu deleted as requested */}
 
-        {/* Right column main content panel */}
-        <main className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col gap-6 ${showExplanation ? 'max-w-7xl' : 'max-w-5xl'} mx-auto w-full transition-all duration-300`}>
+          {/* Right column main content panel */}
+          <main className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col gap-6 ${showExplanation ? 'max-w-[95%]' : 'max-w-[90%]'} mx-auto w-full transition-all duration-300`}>
           
           {/* FUNCTION INPUT CARD (NO-PRINT) */}
           <section className="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-sm no-print flex flex-col gap-4">
@@ -797,7 +757,6 @@ export default function App() {
                   value={functionInput}
                   onChange={(val) => {
                     setFunctionInput(val);
-                    setSelectedTemplate(null);
                   }}
                   onSubmit={() => {
                     if (functionInput.trim()) {
@@ -818,265 +777,6 @@ export default function App() {
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
-
-            {/* INTUITIVE MATH TEMPLATE BUILDER (Desmos/GeoGebra Style) */}
-            <div className="border-t border-slate-100 pt-4 mt-2">
-              <div className="flex flex-col gap-3">
-                <span className="text-xs font-bold tracking-wide text-slate-500 uppercase select-none">
-                  Trình dựng công thức trực quan (Chọn mẫu điền khuyết)
-                </span>
-                
-                {/* Preset select tabs */}
-                <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1 rounded-xl w-fit">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTemplate(null)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      selectedTemplate === null
-                        ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/50'
-                        : 'text-slate-600 hover:bg-slate-200/50'
-                    }`}
-                  >
-                    Tự nhập tự do
-                  </button>
-                  {[
-                    { id: 'cubic', label: 'Hàm Bậc 3' },
-                    { id: 'quartic', label: 'Trùng Phương' },
-                    { id: 'rational', label: 'Nhất Biến (Bậc 1/1)' },
-                    { id: 'sqrt', label: 'Căn Thức' },
-                    { id: 'log_exp', label: 'Mũ & Logarit' },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setSelectedTemplate(tab.id as any)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        selectedTemplate === tab.id
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:bg-slate-200/50'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Interactive visual slots form */}
-                {selectedTemplate && (
-                  <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-xl flex flex-col items-center justify-center gap-3 animate-in fade-in zoom-in-95 duration-200">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
-                      Hãy thay đổi các giá trị ở ô trống bên dưới để tạo hàm số của bạn
-                    </span>
-                    
-                    {/* Cubic Layout */}
-                    {selectedTemplate === 'cubic' && (
-                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
-                        <span className="text-indigo-600 italic font-mono">y</span>
-                        <span>=</span>
-                        <input
-                          type="text"
-                          value={tempValues.cubic_a}
-                          onChange={(e) => updateTempValue('cubic_a', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="a"
-                        />
-                        <span>x³</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.cubic_b}
-                          onChange={(e) => updateTempValue('cubic_b', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="b"
-                        />
-                        <span>x²</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.cubic_c}
-                          onChange={(e) => updateTempValue('cubic_c', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="c"
-                        />
-                        <span>x</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.cubic_d}
-                          onChange={(e) => updateTempValue('cubic_d', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="d"
-                        />
-                      </div>
-                    )}
-
-                    {/* Quartic Layout */}
-                    {selectedTemplate === 'quartic' && (
-                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
-                        <span className="text-indigo-600 italic font-mono">y</span>
-                        <span>=</span>
-                        <input
-                          type="text"
-                          value={tempValues.quartic_a}
-                          onChange={(e) => updateTempValue('quartic_a', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="a"
-                        />
-                        <span>x⁴</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.quartic_b}
-                          onChange={(e) => updateTempValue('quartic_b', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="b"
-                        />
-                        <span>x²</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.quartic_c}
-                          onChange={(e) => updateTempValue('quartic_c', e.target.value)}
-                          className="w-12 h-9 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="c"
-                        />
-                      </div>
-                    )}
-
-                    {/* Rational Layout */}
-                    {selectedTemplate === 'rational' && (
-                      <div className="flex items-center gap-3 text-base font-bold text-slate-700 font-sans">
-                        <span className="text-indigo-600 italic font-mono">y</span>
-                        <span>=</span>
-                        <div className="flex flex-col items-center gap-1.5">
-                          {/* Numerator */}
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={tempValues.rational_a}
-                              onChange={(e) => updateTempValue('rational_a', e.target.value)}
-                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="a"
-                            />
-                            <span className="text-sm font-bold">x</span>
-                            <span className="text-slate-400 font-normal">+</span>
-                            <input
-                              type="text"
-                              value={tempValues.rational_b}
-                              onChange={(e) => updateTempValue('rational_b', e.target.value)}
-                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="b"
-                            />
-                          </div>
-                          {/* Fraction Line */}
-                          <div className="w-full h-[2px] bg-slate-300 rounded"></div>
-                          {/* Denominator */}
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={tempValues.rational_c}
-                              onChange={(e) => updateTempValue('rational_c', e.target.value)}
-                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="c"
-                            />
-                            <span className="text-sm font-bold">x</span>
-                            <span className="text-slate-400 font-normal">+</span>
-                            <input
-                              type="text"
-                              value={tempValues.rational_d}
-                              onChange={(e) => updateTempValue('rational_d', e.target.value)}
-                              className="w-10 h-8 text-center bg-white border border-slate-300 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="d"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Sqrt Layout */}
-                    {selectedTemplate === 'sqrt' && (
-                      <div className="flex items-center gap-2 text-base font-bold text-slate-700 font-sans">
-                        <span className="text-indigo-600 italic font-mono">y</span>
-                        <span>=</span>
-                        <div className="flex items-stretch bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 shadow-sm">
-                          <span className="text-xl font-light text-slate-400 mr-1 select-none">√</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-slate-300 font-light select-none">(</span>
-                            <input
-                              type="text"
-                              value={tempValues.sqrt_a}
-                              onChange={(e) => updateTempValue('sqrt_a', e.target.value)}
-                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="a"
-                            />
-                            <span>x²</span>
-                            <span className="text-slate-400 font-normal">+</span>
-                            <input
-                              type="text"
-                              value={tempValues.sqrt_b}
-                              onChange={(e) => updateTempValue('sqrt_b', e.target.value)}
-                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="b"
-                            />
-                            <span>x</span>
-                            <span className="text-slate-400 font-normal">+</span>
-                            <input
-                              type="text"
-                              value={tempValues.sqrt_c}
-                              onChange={(e) => updateTempValue('sqrt_c', e.target.value)}
-                              className="w-10 h-8 text-center bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                              placeholder="c"
-                            />
-                            <span className="text-slate-300 font-light select-none">)</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Log Exp Layout */}
-                    {selectedTemplate === 'log_exp' && (
-                      <div className="flex flex-wrap items-center justify-center gap-2 text-base font-bold text-slate-700 font-sans">
-                        <span className="text-indigo-600 italic font-mono">y</span>
-                        <span>=</span>
-                        <input
-                          type="text"
-                          value={tempValues.logexp_a}
-                          onChange={(e) => updateTempValue('logexp_a', e.target.value)}
-                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="a"
-                        />
-                        {/* Selector for ln vs e^ */}
-                        <select
-                          value={tempValues.logexp_type}
-                          onChange={(e) => updateTempValue('logexp_type', e.target.value)}
-                          className="h-8 px-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none"
-                        >
-                          <option value="ln">ln(</option>
-                          <option value="e">e^(</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={tempValues.logexp_b}
-                          onChange={(e) => updateTempValue('logexp_b', e.target.value)}
-                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="b"
-                        />
-                        <span>x</span>
-                        <span>)</span>
-                        <span className="text-slate-400 font-normal">+</span>
-                        <input
-                          type="text"
-                          value={tempValues.logexp_c}
-                          onChange={(e) => updateTempValue('logexp_c', e.target.value)}
-                          className="w-10 h-8 text-center bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none"
-                          placeholder="c"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
           </section>
 
           {/* SKELETON / LOADING LOADER PANEL */}
@@ -1225,6 +925,9 @@ export default function App() {
                     onToggleMask={handleToggleMask}
                     onAnswerChange={handleAnswerChange}
                     showGraph={showGraph}
+                    highlightRange={highlightRange}
+                    highlightMaxPts={highlightMaxPts}
+                    highlightMinPts={highlightMinPts}
                   />
                   
                   {/* Printed footer signature under table if printed */}
@@ -1470,6 +1173,14 @@ export default function App() {
               {/* RIGHT COLUMN: STEP-BY-STEP MATHEMATICAL EXPLANATION */}
               {showExplanation && (
                 <div className="lg:col-span-2 flex flex-col gap-6 h-fit lg:sticky lg:top-[90px]">
+                  <ExtremaCalculator
+                    analysis={analysis}
+                    onHighlightRange={(range, maxPts, minPts) => {
+                      setHighlightRange(range);
+                      setHighlightMaxPts(maxPts);
+                      setHighlightMinPts(minPts);
+                    }}
+                  />
                   <ExplanationPanel 
                     steps={analysis.explanation_steps} 
                     bbtElement={
@@ -1484,6 +1195,9 @@ export default function App() {
                           onToggleMask={() => {}}
                           onAnswerChange={() => {}}
                           showGraph={false}
+                          highlightRange={highlightRange}
+                          highlightMaxPts={highlightMaxPts}
+                          highlightMinPts={highlightMinPts}
                         />
                       </div>
                     }
@@ -1499,6 +1213,8 @@ export default function App() {
       </div>
 
     </div>
+
+  </div>
   );
 }
 
@@ -1511,11 +1227,4 @@ function VisualBBTFormula({ latex }: FormulaProps) {
   return <MathLaTeX math={latex} block={false} />;
 }
 
-// Small helper chevron icon
-function ChevronRight({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
+

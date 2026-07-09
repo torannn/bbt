@@ -44,3 +44,22 @@
   display: inline-block !important;
   font-weight: 900 !important;
 }
+
+/* Custom styling for Mathfield virtual keyboard spacers */
+.ML__keyboard button.spacer,
+.ML__keyboard .MLK__keycap.spacer,
+.MLK__keycap.spacer {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+}
+
+/* Hide built-in Mathfield virtual keyboard and menu toggle buttons inside the math field */
+math-field::part(virtual-keyboard-toggle) {
+  display: none !important;
+}
+
+math-field::part(menu-toggle) {
+  display: none !important;
+}

@@ -7,6 +7,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as math from 'mathjs';
 import { XPoint, FunctionAnalysis, YPrimePointSymbol, YPrimeIntervalSymbol, YPointValue } from '../types';
 import { MathLaTeX } from './MathLaTeX';
+import { toExactLatex } from '../lib/cas';
 import { Eye, EyeOff, Check, X, ZoomIn, ZoomOut, RotateCcw, Scale, Maximize2, Minimize2, SlidersHorizontal, ChevronRight, ChevronLeft } from 'lucide-react';
 
 interface VisualBBTProps {
@@ -19,6 +20,9 @@ interface VisualBBTProps {
   onToggleMask?: (cellId: string, originalValue: string, type: 'x' | 'y_prime_point' | 'y_prime_interval' | 'y_value', index: number, subIndex?: 'left' | 'right' | 'single') => void;
   onAnswerChange?: (cellId: string, value: string) => void;
   showGraph?: boolean;
+  highlightRange?: [number, number] | null;
+  highlightMaxPts?: { x: number; y: number }[];
+  highlightMinPts?: { x: number; y: number }[];
 }
 
 export function VisualBBT({
@@ -31,12 +35,30 @@ export function VisualBBT({
   onToggleMask,
   onAnswerChange,
   showGraph = true,
+  highlightRange = null,
+  highlightMaxPts = [],
+  highlightMinPts = [],
 }: VisualBBTProps) {
   const { x_points, y_prime, y_row } = analysis;
   const N = x_points.length;
 
   const formatMathValue = (val: number): string => {
     return parseFloat(val.toFixed(4)).toString();
+  };
+
+  const [displayFormat, setDisplayFormat] = useState<'fraction' | 'decimal'>('fraction');
+  const [decimalPlaces, setDecimalPlaces] = useState<number>(2);
+
+  const formatValue = (val: number): string => {
+    if (isNaN(val) || !isFinite(val)) return '';
+    if (displayFormat === 'fraction') {
+      const latex = toExactLatex(val);
+      if (!latex.includes('\\frac') && !latex.includes('\\sqrt') && latex.includes('.')) {
+        return parseFloat(val.toFixed(decimalPlaces)).toString();
+      }
+      return latex;
+    }
+    return parseFloat(val.toFixed(decimalPlaces)).toString();
   };
 
   // --- GRAPH PLOTTING STATE & CALCULATIONS ---
@@ -54,7 +76,8 @@ export function VisualBBT({
   const [scaleMode, setScaleMode] = useState<'bbt' | 'linear'>('linear');
   const [zoomFactor, setZoomFactor] = useState<number>(1.0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState<boolean>(false);
+  const [autoFitY, setAutoFitY] = useState<boolean>(true);
+  const [containerWidth, setContainerWidth] = useState<number>(800);
 
   const activeIntervalIdx = useMemo(() => {
     if (hoverX === null || intervalBounds.length === 0) return -1;
@@ -74,6 +97,7 @@ export function VisualBBT({
 
     const updateCenters = () => {
       const parentRect = container.getBoundingClientRect();
+      setContainerWidth(parentRect.width);
       
       // Measure centers of the milestone cells
       const centers: number[] = [];
@@ -168,10 +192,10 @@ export function VisualBBT({
       .filter(m => m.p.type !== 'infinity' && m.value !== undefined && isFinite(m.value)) as { p: XPoint, idx: number, value: number }[];
 
     if (milestones.length === 0) {
-      return { xStart: -4, xEnd: 4 };
+      return { xStart: -12, xEnd: 12 };
     } else if (milestones.length === 1) {
       const v = milestones[0].value;
-      return { xStart: v - 4, xEnd: v + 4 };
+      return { xStart: v - 12, xEnd: v + 12 };
     } else {
       const first = milestones[0];
       const last = milestones[milestones.length - 1];
@@ -180,24 +204,19 @@ export function VisualBBT({
       const v_first = first.value;
       const v_last = last.value;
 
-      // We want to map first milestone to fraction idx_first / (N - 1)
-      // and last milestone to fraction idx_last / (N - 1)
-      // Dividing factor: (idx_last - idx_first) / (N - 1)
       const indexDiff = idx_last - idx_first;
       const valDiff = v_last - v_first;
 
       if (indexDiff > 0 && valDiff > 0) {
-        // Calculate the exact mathematical spacing that makes the linear scale align perfectly
         const step = valDiff / indexDiff;
-        const xStart = v_first - idx_first * step;
-        const xEnd = v_last + (N - 1 - idx_last) * step;
+        const xStart = Math.min(v_first - 12, v_first - idx_first * step);
+        const xEnd = Math.max(v_last + 12, v_last + (N - 1 - idx_last) * step);
         return { xStart, xEnd };
       } else {
-        // Fallback
         const minV = Math.min(...milestones.map(m => m.value));
         const maxV = Math.max(...milestones.map(m => m.value));
         const spacing = maxV - minV || 2;
-        const margin = Math.max(2, Math.min(5, spacing * 1.5));
+        const margin = Math.max(12, spacing * 1.5);
         return { xStart: minV - margin, xEnd: maxV + margin };
       }
     }
@@ -304,14 +323,11 @@ export function VisualBBT({
     }
 
     // Include critical values
-    x_points.forEach((p, idx) => {
-      if (p.type === 'critical') {
-        const yv = y_row.points[idx];
-        if (yv && yv.type === 'single') {
-          const parsedVal = parseFloat(yv.latex);
-          if (!isNaN(parsedVal)) {
-            sampleYVals.push(parsedVal);
-          }
+    x_points.forEach((p) => {
+      if (p.type === 'critical' && p.value !== undefined && isFinite(p.value)) {
+        const yVal = evaluateY(p.value);
+        if (!isNaN(yVal)) {
+          sampleYVals.push(yVal);
         }
       }
     });
@@ -326,13 +342,24 @@ export function VisualBBT({
       yMin = q5;
       yMax = q95;
       
+      // Expand yMin and yMax to ensure all critical values are visible
+      x_points.forEach((p) => {
+        if (p.type === 'critical' && p.value !== undefined && isFinite(p.value)) {
+          const yVal = evaluateY(p.value);
+          if (!isNaN(yVal)) {
+            yMin = Math.min(yMin, yVal);
+            yMax = Math.max(yMax, yVal);
+          }
+        }
+      });
+      
       const yDiff = yMax - yMin;
       if (yDiff < 0.1) {
         yMin -= 2;
         yMax += 2;
       } else {
-        yMin -= yDiff * 0.25;
-        yMax += yDiff * 0.25;
+        yMin -= yDiff * 0.15;
+        yMax += yDiff * 0.15;
       }
     }
     return { yMin, yMax };
@@ -349,14 +376,62 @@ export function VisualBBT({
       const py = svgHeight - pad - (y - yMin) * scale;
       return Math.max(-100, Math.min(svgHeight + 100, py));
     } else {
-      // Linear 1:1 mode
-      const xScale = (colCenters[colCenters.length - 1] - colCenters[0]) / (xEnd - xStart || 1);
-      const yScale = xScale * zoomFactor;
-      const yMid = (yMin + yMax) / 2;
-      const py = svgHeight / 2 - (y - yMid) * yScale;
-      return Math.max(-200, Math.min(svgHeight + 200, py));
+      if (autoFitY) {
+        const pad = 24;
+        const scale = (svgHeight - 2 * pad) / (yMax - yMin || 1) * zoomFactor;
+        const yMid = (yMin + yMax) / 2;
+        const py = svgHeight / 2 - (y - yMid) * scale;
+        return Math.max(-200, Math.min(svgHeight + 200, py));
+      } else {
+        // Linear 1:1 mode
+        const xScale = (colCenters[colCenters.length - 1] - colCenters[0]) / (xEnd - xStart || 1);
+        const yScale = xScale * zoomFactor;
+        const yMid = (yMin + yMax) / 2;
+        const py = svgHeight / 2 - (y - yMid) * yScale;
+        return Math.max(-200, Math.min(svgHeight + 200, py));
+      }
     }
   };
+
+  const xTicks = useMemo(() => {
+    if (scaleMode !== 'linear') return [];
+    const span = xEnd - xStart;
+    let step = 1;
+    if (span > 100) step = 10;
+    else if (span > 40) step = 5;
+    else if (span > 20) step = 2;
+    else if (span < 5) step = 0.5;
+    
+    const ticks: number[] = [];
+    const startTick = Math.ceil(xStart / step) * step;
+    for (let val = startTick; val <= xEnd; val += step) {
+      if (Math.abs(val) > 1e-5) {
+        ticks.push(val);
+      }
+    }
+    return ticks;
+  }, [xStart, xEnd, scaleMode]);
+
+  const yTicks = useMemo(() => {
+    const span = yMax - yMin;
+    let step = 1;
+    if (span > 1000) step = 100;
+    else if (span > 400) step = 50;
+    else if (span > 200) step = 20;
+    else if (span > 100) step = 10;
+    else if (span > 40) step = 5;
+    else if (span > 20) step = 2;
+    else if (span < 5) step = 0.5;
+    
+    const ticks: number[] = [];
+    const startTick = Math.ceil(yMin / step) * step;
+    for (let val = startTick; val <= yMax; val += step) {
+      if (Math.abs(val) > 1e-5) {
+        ticks.push(val);
+      }
+    }
+    return ticks;
+  }, [yMin, yMax]);
 
   // Helper to check if a pole is between x1 and x2
   const hasPoleBetween = (x1: number, x2: number): boolean => {
@@ -692,29 +767,29 @@ export function VisualBBT({
   };
 
   const gridStyle = useMemo(() => {
-    if (scaleMode === 'linear') {
-      // Calculate mathematical interval lengths
-      const intervals = Array.from({ length: N - 1 }).map((_, i) => {
-        const pLeft = x_points[i];
-        const pRight = x_points[i + 1];
-        const leftVal = pLeft.type === 'infinity' ? xStart : pLeft.value!;
-        const rightVal = pRight.type === 'infinity' ? xEnd : pRight.value!;
-        return Math.max(0.1, rightVal - leftVal);
-      });
-      
-      // Map them to fr weights
-      const cols = Array.from({ length: N }).map((_, i) => {
-        const milestoneCol = `minmax(56px, max-content)`;
-        if (i < N - 1) {
-          const intervalWeight = intervals[i];
-          return `${milestoneCol} ${intervalWeight.toFixed(4)}fr`;
-        }
-        return milestoneCol;
-      }).join(' ');
+    const W_header = 72;
+    const W_m = 64;
+    const W_content = Math.max(500, containerWidth - W_header);
 
+    if (scaleMode === 'linear') {
+      const cols: string[] = [];
+      for (let i = 0; i < N; i++) {
+        cols.push(`${W_m}px`);
+        if (i < N - 1) {
+          const pLeft = x_points[i];
+          const pRight = x_points[i + 1];
+          const leftVal = pLeft.type === 'infinity' ? xStart : pLeft.value!;
+          const rightVal = pRight.type === 'infinity' ? xEnd : pRight.value!;
+          const tLeft = (leftVal - xStart) / (xEnd - xStart || 1);
+          const tRight = (rightVal - xStart) / (xEnd - xStart || 1);
+          const targetDist = (tRight - tLeft) * W_content;
+          const w_int = Math.max(12, targetDist - W_m);
+          cols.push(`${w_int.toFixed(1)}px`);
+        }
+      }
       return {
         display: 'grid',
-        gridTemplateColumns: `minmax(64px, 80px) ${cols}`,
+        gridTemplateColumns: `${W_header}px ${cols.join(' ')}`,
       };
     } else {
       // Uniform 1fr intervals
@@ -723,7 +798,7 @@ export function VisualBBT({
         gridTemplateColumns: `minmax(64px, 80px) ${Array.from({ length: N }).map((_, i) => `minmax(56px, max-content) ${i < N - 1 ? '1fr' : ''}`).join(' ').trim()}`,
       };
     }
-  }, [scaleMode, N, x_points, xStart, xEnd]);
+  }, [scaleMode, N, x_points, xStart, xEnd, containerWidth]);
 
   const mainContent = (
     <div 
@@ -751,6 +826,68 @@ export function VisualBBT({
               {isReady ? (
                 <>
                   <svg className="w-full h-full select-none" style={{ display: 'block' }}>
+                    {/* 0. Cartesian grid lines */}
+                    {scaleMode === 'linear' && (
+                      <g className="grid-lines select-none opacity-40">
+                        {xTicks.map(val => {
+                          const px = xToPixel(val) - svgLeft;
+                          const startPx = colCenters[0] - svgLeft;
+                          const endPx = colCenters[colCenters.length - 1] - svgLeft;
+                          if (px < startPx || px > endPx) return null;
+                          return (
+                            <g key={`grid-x-${val}`}>
+                              <line x1={px} y1={0} x2={px} y2={svgHeight} stroke="#cbd5e1" strokeWidth="0.5" strokeDasharray="2 2" />
+                              <text x={px} y={svgHeight - 6} fill="#94a3b8" fontSize="8" textAnchor="middle" className="font-semibold">{val}</text>
+                            </g>
+                          );
+                        })}
+                        {yTicks.map(val => {
+                          const py = mapYToPixel(val);
+                          if (py < 10 || py > svgHeight - 10) return null;
+                          const startPx = colCenters[0] - svgLeft;
+                          const endPx = colCenters[colCenters.length - 1] - svgLeft;
+                          return (
+                            <g key={`grid-y-${val}`}>
+                              <line x1={startPx} y1={py} x2={endPx} y2={py} stroke="#cbd5e1" strokeWidth="0.5" strokeDasharray="2 2" />
+                              <text x={startPx + 6} y={py + 3} fill="#94a3b8" fontSize="8" className="font-semibold">{val}</text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    )}
+
+                    {/* 0.5. Highlighted interval range */}
+                    {highlightRange && (
+                      <g>
+                        {(() => {
+                          const pxA = xToPixel(highlightRange[0]) - svgLeft;
+                          const pxB = xToPixel(highlightRange[1]) - svgLeft;
+                          const startPx = colCenters[0] - svgLeft;
+                          const endPx = colCenters[colCenters.length - 1] - svgLeft;
+                          
+                          const constrainedA = Math.max(startPx, Math.min(endPx, pxA));
+                          const constrainedB = Math.max(startPx, Math.min(endPx, pxB));
+                          
+                          const x = Math.min(constrainedA, constrainedB);
+                          const width = Math.max(1, Math.abs(constrainedB - constrainedA));
+                          
+                          return (
+                            <rect 
+                              x={x} 
+                              y={0} 
+                              width={width} 
+                              height={svgHeight} 
+                              fill="#6366f1" 
+                              fillOpacity="0.06" 
+                              stroke="#6366f1" 
+                              strokeWidth="1.2" 
+                              strokeDasharray="3 3" 
+                            />
+                          );
+                        })()}
+                      </g>
+                    )}
+
                     {/* 1. Horizontal axis (y=0) */}
                     {!isNaN(yZeroPx) && yZeroPx >= 0 && yZeroPx <= svgHeight && (
                       <g>
@@ -905,21 +1042,82 @@ export function VisualBBT({
                                     stroke="#ffffff" 
                                     strokeWidth="1.5" 
                                   />
-                                  <text 
-                                    x={px - svgLeft + 8} 
-                                    y={py > svgHeight / 2 ? py - 8 : py + 14} 
-                                    fill="#e11d48" 
-                                    fontSize="9.5" 
-                                    fontWeight="bold"
-                                    className="select-none font-sans"
+                                  <foreignObject
+                                    x={px - svgLeft - 80}
+                                    y={py > svgHeight / 2 ? py - 26 : py + 8}
+                                    width={160}
+                                    height={20}
+                                    className="overflow-visible select-none pointer-events-none"
                                   >
-                                    ({p.value}; {yVal})
-                                  </text>
+                                    <div className="flex justify-center items-center h-full text-[9px] font-bold text-rose-700 bg-white/85 border border-rose-100 rounded px-1.5 shadow-sm">
+                                      (<MathLaTeX math={`${formatValue(p.value!)}; ${formatValue(yVal)}`} />)
+                                    </div>
+                                  </foreignObject>
                                 </g>
                               );
                             }
                           }
                         }
+                      }
+                      return null;
+                    })}
+
+                    {/* 6.5. GTLN / GTNN highlight dots */}
+                    {(highlightMaxPts || []).map((pt, idx) => {
+                      const px = xToPixel(pt.x) - svgLeft;
+                      const py = mapYToPixel(pt.y);
+                      const startPx = colCenters[0] - svgLeft;
+                      const endPx = colCenters[colCenters.length - 1] - svgLeft;
+                      if (px >= startPx && px <= endPx && py >= 0 && py <= svgHeight) {
+                        return (
+                          <g key={`max-highlight-${idx}`}>
+                            <circle cx={px} cy={py} r="5.5" fill="#10b981" fillOpacity="0.4">
+                              <animate attributeName="r" values="5.5;14;5.5" dur="2s" repeatCount="indefinite" />
+                              <animate attributeName="fill-opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
+                            </circle>
+                            <circle cx={px} cy={py} r="5.5" fill="#10b981" stroke="#ffffff" strokeWidth="2" />
+                            <foreignObject
+                              x={px - 60}
+                              y={py - 27}
+                              width={120}
+                              height={20}
+                              className="overflow-visible select-none pointer-events-none"
+                            >
+                              <div className="flex justify-center items-center h-full text-[9px] font-bold text-emerald-800 bg-white/95 border border-emerald-100 rounded px-1.5 shadow-sm">
+                                Max (<MathLaTeX math={formatValue(pt.y)} />)
+                              </div>
+                            </foreignObject>
+                          </g>
+                        );
+                      }
+                      return null;
+                    })}
+                    {(highlightMinPts || []).map((pt, idx) => {
+                      const px = xToPixel(pt.x) - svgLeft;
+                      const py = mapYToPixel(pt.y);
+                      const startPx = colCenters[0] - svgLeft;
+                      const endPx = colCenters[colCenters.length - 1] - svgLeft;
+                      if (px >= startPx && px <= endPx && py >= 0 && py <= svgHeight) {
+                        return (
+                          <g key={`min-highlight-${idx}`}>
+                            <circle cx={px} cy={py} r="5.5" fill="#ef4444" fillOpacity="0.4">
+                              <animate attributeName="r" values="5.5;14;5.5" dur="2s" repeatCount="indefinite" />
+                              <animate attributeName="fill-opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
+                            </circle>
+                            <circle cx={px} cy={py} r="5.5" fill="#ef4444" stroke="#ffffff" strokeWidth="2" />
+                            <foreignObject
+                              x={px - 60}
+                              y={py + 8}
+                              width={120}
+                              height={20}
+                              className="overflow-visible select-none pointer-events-none"
+                            >
+                              <div className="flex justify-center items-center h-full text-[9px] font-bold text-rose-800 bg-white/95 border border-rose-100 rounded px-1.5 shadow-sm">
+                                Min (<MathLaTeX math={formatValue(pt.y)} />)
+                              </div>
+                            </foreignObject>
+                          </g>
+                        );
                       }
                       return null;
                     })}
@@ -930,11 +1128,13 @@ export function VisualBBT({
                         <circle 
                           cx={hoverX - svgLeft} 
                           cy={mapYToPixel(hoverYVal)} 
-                          r="8" 
-                          fill="rgba(79, 70, 229, 0.2)" 
-                          className="animate-ping"
-                          style={{ transformOrigin: `${hoverX - svgLeft}px ${mapYToPixel(hoverYVal)}px` }}
-                        />
+                          r="4.5" 
+                          fill="rgba(79, 70, 229, 0.4)" 
+                          fillOpacity="0.4"
+                        >
+                          <animate attributeName="r" values="4.5;12;4.5" dur="1.8s" repeatCount="indefinite" />
+                          <animate attributeName="fill-opacity" values="0.4;0;0.4" dur="1.8s" repeatCount="indefinite" />
+                        </circle>
                         <circle 
                           cx={hoverX - svgLeft} 
                           cy={mapYToPixel(hoverYVal)} 
@@ -947,108 +1147,8 @@ export function VisualBBT({
                     )}
                   </svg>
 
-                  {/* FLOATING CONTROLS TOOLBAR */}
-                  {isToolbarCollapsed ? (
-                    <button
-                      onClick={() => setIsToolbarCollapsed(false)}
-                      className="absolute top-3 right-3 bg-white/95 border border-slate-200/85 px-3 py-1.5 rounded-xl shadow-md flex items-center gap-2 z-20 backdrop-blur-md text-xs no-print hover:bg-slate-50 hover:border-slate-300 hover:text-indigo-600 transition-all text-slate-600 font-medium group"
-                      title="Hiện thanh công cụ phóng to / căn dóng"
-                    >
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500 group-hover:rotate-12 transition-transform" />
-                      <span className="font-bold text-[10px] uppercase tracking-wider text-slate-500 group-hover:text-indigo-600">Hiện công cụ</span>
-                    </button>
-                  ) : (
-                    <div className="absolute top-3 right-3 bg-white/95 border border-slate-200/85 px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-3 z-20 backdrop-blur-md text-xs no-print transition-all duration-200">
-                      
-                      {/* Collapse Button */}
-                      <button
-                        onClick={() => setIsToolbarCollapsed(true)}
-                        className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors mr-0.5"
-                        title="Ẩn bớt thanh công cụ (Thu gọn)"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-
-                      {/* Scale Mode Picker */}
-                      <div className="flex items-center gap-1.5 border-r border-slate-100 pr-3 mr-1">
-                        <Scale className="w-3.5 h-3.5 text-indigo-500" />
-                        <span className="font-semibold text-slate-500 mr-0.5">Tỉ lệ:</span>
-                        <div className="flex gap-0.5 bg-slate-100 p-0.5 rounded-lg">
-                          <button
-                            onClick={() => setScaleMode('linear')}
-                            className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
-                              scaleMode === 'linear'
-                                ? 'bg-indigo-600 text-white shadow-sm'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                            title="Tỉ lệ 1:1 chuẩn học đường, giữ đúng hình dạng đồ thị"
-                          >
-                            Chuẩn 1:1
-                          </button>
-                          <button
-                            onClick={() => setScaleMode('bbt')}
-                            className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
-                              scaleMode === 'bbt'
-                                ? 'bg-indigo-600 text-white shadow-sm'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                            title="Căn dóng thẳng hàng tuyệt đối với các cột hoành độ BBT"
-                          >
-                            Căn dóng BBT
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Zoom Controls */}
-                      {scaleMode === 'linear' && (
-                        <div className="flex items-center gap-2 border-r border-slate-100 pr-3 mr-1 animate-in fade-in slide-in-from-right-3 duration-200">
-                          <span className="font-semibold text-slate-500">Thu phóng:</span>
-                          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5">
-                            <button
-                              onClick={() => setZoomFactor(prev => Math.max(0.3, prev - 0.1))}
-                              className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
-                              title="Thu nhỏ"
-                            >
-                              <ZoomOut className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="font-mono text-[11px] font-bold text-slate-700 min-w-[32px] text-center">
-                              {(zoomFactor * 100).toFixed(0)}%
-                            </span>
-                            <button
-                              onClick={() => setZoomFactor(prev => Math.min(3.0, prev + 0.1))}
-                              className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
-                              title="Phóng to"
-                            >
-                              <ZoomIn className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setZoomFactor(1.0)}
-                              className="p-1 border-l border-slate-200 pl-1.5 ml-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors"
-                              title="Đặt lại tỉ lệ 1:1 mặc định"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Fullscreen Workspace Button */}
-                      <div className="flex items-center pl-2 border-l border-slate-100">
-                        <button
-                          onClick={() => setIsFullscreen(!isFullscreen)}
-                          className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-1"
-                          title={isFullscreen ? "Thu nhỏ chế độ toàn màn hình" : "Phóng to toàn màn hình làm việc (Đồ thị & BBT)"}
-                        >
-                          {isFullscreen ? (
-                            <Minimize2 className="w-4 h-4" />
-                          ) : (
-                            <Maximize2 className="w-4 h-4" />
-                          )}
-                          <span className="hidden md:inline font-bold text-[10px] uppercase tracking-wider text-slate-400 hover:text-indigo-600 pl-0.5">Fullscreen</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  
+                  {/* Floating toolbar removed and relocated to card header */}
                 </>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -1278,11 +1378,13 @@ export function VisualBBT({
                               <circle 
                                 cx={dotX} 
                                 cy={dotY} 
-                                r="8" 
+                                r="4.5" 
                                 fill="rgba(79, 70, 229, 0.4)" 
-                                className="animate-ping"
-                                style={{ transformOrigin: `${dotX}px ${dotY}px` }}
-                              />
+                                fillOpacity="0.4"
+                              >
+                                <animate attributeName="r" values="4.5;12;4.5" dur="1.8s" repeatCount="indefinite" />
+                                <animate attributeName="fill-opacity" values="0.4;0;0.4" dur="1.8s" repeatCount="indefinite" />
+                              </circle>
                               {/* Inner solid dot */}
                               <circle 
                                 cx={dotX} 
@@ -1309,6 +1411,184 @@ export function VisualBBT({
 
       </div>
   );
+  const renderGraphToolbar = () => {
+    if (!showGraph) return null;
+    return (
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between no-print text-xs gap-3 select-none">
+        <div className="flex items-center gap-1.5 text-slate-700">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
+          <span className="font-bold text-[10px] uppercase tracking-wider text-slate-500">Tùy chỉnh đồ thị</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Scale Mode Picker */}
+          <div className="flex items-center gap-1.5">
+            <Scale className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="font-semibold text-slate-500">Tỉ lệ:</span>
+            <div className="flex gap-0.5 bg-slate-250 p-0.5 rounded-lg border border-slate-200/50">
+              <button
+                onClick={() => setScaleMode('linear')}
+                className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                  scaleMode === 'linear'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Đồ thị tuyến tính phẳng không bị méo lệch cột"
+              >
+                Tuyến tính
+              </button>
+              <button
+                onClick={() => setScaleMode('bbt')}
+                className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                  scaleMode === 'bbt'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Căn dóng thẳng hàng tuyệt đối với các cột hoành độ BBT"
+              >
+                Căn dóng BBT
+              </button>
+            </div>
+          </div>
+
+          {/* Y Axis Mode Picker */}
+          {scaleMode === 'linear' && (
+            <div className="flex items-center gap-1.5 border-l border-slate-250 pl-3">
+              <span className="font-semibold text-slate-500">Trục Y:</span>
+              <div className="flex gap-0.5 bg-slate-250 p-0.5 rounded-lg border border-slate-200/50">
+                <button
+                  onClick={() => setAutoFitY(true)}
+                  className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                    autoFitY
+                      ? 'bg-white text-indigo-700 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Tự động giãn tỉ lệ để hiển thị trọn vẹn cực trị lớn"
+                >
+                  Tự động khít
+                </button>
+                <button
+                  onClick={() => setAutoFitY(false)}
+                  className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                    !autoFitY
+                      ? 'bg-white text-indigo-700 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Khóa tỉ lệ x:y = 1:1 chuẩn sách giáo khoa"
+                >
+                  Khóa 1:1
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Number Display Format Picker */}
+          <div className="flex items-center gap-1.5 border-l border-slate-250 pl-3">
+            <span className="font-semibold text-slate-500">Định dạng số:</span>
+            <div className="flex gap-0.5 bg-slate-250 p-0.5 rounded-lg border border-slate-200/50">
+              <button
+                onClick={() => setDisplayFormat('fraction')}
+                className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                  displayFormat === 'fraction'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Hiển thị dạng phân số toán học chính xác"
+              >
+                Phân số
+              </button>
+              <button
+                onClick={() => setDisplayFormat('decimal')}
+                className={`px-2 py-1 text-[11px] font-bold rounded-md transition-all ${
+                  displayFormat === 'decimal'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Hiển thị dạng số thập phân xấp xỉ"
+              >
+                Thập phân
+              </button>
+            </div>
+          </div>
+
+          {/* Decimal Places Rounding Control */}
+          {displayFormat === 'decimal' && (
+            <div className="flex items-center gap-1.5 border-l border-slate-250 pl-3">
+              <span className="font-semibold text-slate-500">Làm tròn:</span>
+              <div className="flex items-center gap-1 bg-slate-250 p-0.5 rounded-lg border border-slate-200/50 h-7">
+                <button
+                  onClick={() => setDecimalPlaces(prev => Math.max(0, prev - 1))}
+                  className="w-5 h-5 flex items-center justify-center font-bold text-slate-650 hover:bg-white rounded transition-all text-xs"
+                  title="Giảm số chữ số thập phân"
+                >
+                  -
+                </button>
+                <span className="w-6 text-center font-mono font-bold text-slate-800 text-[11px]">
+                  {decimalPlaces}
+                </span>
+                <button
+                  onClick={() => setDecimalPlaces(prev => Math.min(6, prev + 1))}
+                  className="w-5 h-5 flex items-center justify-center font-bold text-slate-650 hover:bg-white rounded transition-all text-xs"
+                  title="Tăng số chữ số thập phân"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Zoom Controls */}
+          {scaleMode === 'linear' && (
+            <div className="flex items-center gap-2 border-l border-slate-250 pl-3">
+              <span className="font-semibold text-slate-500">Thu phóng:</span>
+              <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 shadow-sm">
+                <button
+                  onClick={() => setZoomFactor(prev => Math.max(0.3, prev - 0.1))}
+                  className="p-0.5 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
+                  title="Thu nhỏ"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono text-[11px] font-bold text-slate-750 min-w-[32px] text-center">
+                  {(zoomFactor * 100).toFixed(0)}%
+                </span>
+                <button
+                  onClick={() => setZoomFactor(prev => Math.min(3.0, prev + 0.1))}
+                  className="p-0.5 hover:bg-slate-100 rounded text-slate-500 hover:text-indigo-600 transition-colors"
+                  title="Phóng to"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setZoomFactor(1.0)}
+                  className="p-0.5 border-l border-slate-200 pl-1.5 ml-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors"
+                  title="Đặt lại tỉ lệ 1:1 mặc định"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Fullscreen Workspace Button */}
+          <div className="flex items-center border-l border-slate-250 pl-3">
+            <button
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="px-2.5 py-1 hover:bg-slate-100 rounded-lg border border-slate-200 bg-white text-slate-650 hover:text-indigo-650 transition-all flex items-center gap-1 shadow-sm font-bold"
+              title={isFullscreen ? "Thu nhỏ chế độ toàn màn hình" : "Phóng to toàn màn hình làm việc (Đồ thị & BBT)"}
+            >
+              {isFullscreen ? (
+                <Minimize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
+              <span className="text-[10px] uppercase tracking-wider">Fullscreen</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (isFullscreen) {
     return (
@@ -1341,6 +1621,7 @@ export function VisualBBT({
           
           {/* Main Visual Board */}
           <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            {renderGraphToolbar()}
             {mainContent}
           </div>
         </div>
@@ -1350,6 +1631,7 @@ export function VisualBBT({
 
   return (
     <div className="w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm print-card">
+      {renderGraphToolbar()}
       {mainContent}
     </div>
   );

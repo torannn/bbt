@@ -10,6 +10,7 @@ import { ExplanationPanel } from './components/ExplanationPanel';
 import { ExtremaCalculator } from './components/ExtremaCalculator';
 import { MathLaTeX } from './components/MathLaTeX';
 import { FunctionAnalysis } from './types';
+import { analyzeFunctionCAS } from './lib/cas';
 import { 
   Calculator, 
   HelpCircle, 
@@ -183,16 +184,9 @@ export default function App() {
     setHighlightMinPts([]);
 
     try {
-      const response = await fetch('/api/analyze-function', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ functionStr: formulaStr.trim() }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Có lỗi xảy ra trong quá trình phân tích hàm số.');
-      }
+      // Execute the analysis entirely locally/offline in the browser!
+      console.log(`[CAS Engine] Client-side parsing of: "${formulaStr}"`);
+      const data = analyzeFunctionCAS(formulaStr.trim());
 
       setAnalysis(data);
       setFunctionInput(formulaStr);
@@ -206,7 +200,8 @@ export default function App() {
       });
 
     } catch (err: any) {
-      setError(err?.message || 'Có lỗi xảy ra khi gọi dịch vụ phân tích.');
+      console.error(err);
+      setError(err?.message || 'Có lỗi xảy ra khi phân tích hàm số. Vui lòng nhập đúng công thức.');
     } finally {
       setIsLoading(false);
     }
